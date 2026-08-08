@@ -1,0 +1,36 @@
+# Dependencias
+node_modules/
+
+# Builds
+dist/
+build/
+.output/
+.vite/
+
+# Variables de entorno y secretos — NUNCA subir al repositorio
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials*.json
+secrets*
+
+# Bases de datos locales
+*.sqlite
+*.sqlite3
+*.db
+
+# Logs y temporales
+*.log
+logs/
+tmp/
+.cache/
+
+# Sistema operativo / editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
