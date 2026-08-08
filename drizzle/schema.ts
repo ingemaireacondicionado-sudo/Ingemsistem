@@ -25,7 +25,11 @@ export const ingemUsers = mysqlTable("ingem_users", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 100 }).notNull(),
   email: varchar("email", { length: 320 }).notNull().unique(),
-  password: varchar("password", { length: 255 }).notNull(),
+  // Contraseña en texto plano (LEGADO). Se mantiene por compatibilidad durante
+  // la transición a hash; ya no se escriben nuevas contraseñas en claro.
+  password: varchar("password", { length: 255 }),
+  // Hash seguro (bcrypt) de la contraseña. Fuente de verdad a partir de ahora.
+  passwordHash: varchar("passwordHash", { length: 255 }),
   role: mysqlEnum("ingemRole", ["admin", "manager", "technician", "viewer"]).default("viewer").notNull(),
   isActive: mysqlBoolean("isActive").default(true).notNull(),
   allowedModules: text("allowedModules"), // JSON array

@@ -69,28 +69,42 @@ export async function getIngemUserByEmail(email: string) {
   return result[0];
 }
 
-export async function createIngemUser(data: { name: string; email: string; password: string; role: "admin" | "manager" | "technician" | "viewer"; isActive: boolean; allowedModules?: string[] }) {
+export async function createIngemUser(data: { name: string; email: string; passwordHash: string; role: "admin" | "manager" | "technician" | "viewer"; isActive: boolean; allowedModules?: string[] }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+  // Usuarios nuevos: solo se guarda el hash. La columna password (legado)
+  // queda en null; nunca se escribe la contraseña en claro.
   const result = await db.insert(ingemUsers).values({
-    name: data.name, email: data.email, password: data.password,
+    name: data.name, email: data.email,
+    password: null, passwordHash: data.passwordHash,
     role: data.role, isActive: data.isActive,
     allowedModules: data.allowedModules ? JSON.stringify(data.allowedModules) : null,
   });
   return { id: result[0].insertId };
 }
 
-export async function updateIngemUser(id: number, data: Partial<{ name: string; email: string; password: string; role: "admin" | "manager" | "technician" | "viewer"; isActive: boolean; allowedModules?: string[] }>) {
+export async function updateIngemUser(id: number, data: Partial<{ name: string; email: string; password: string; passwordHash: string; role: "admin" | "manager" | "technician" | "viewer"; isActive: boolean; allowedModules?: string[] }>) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const updateData: Record<string, unknown> = {};
   if (data.name !== undefined) updateData.name = data.name;
   if (data.email !== undefined) updateData.email = data.email;
   if (data.password !== undefined) updateData.password = data.password;
+  if (data.passwordHash !== undefined) updateData.passwordHash = data.passwordHash;
   if (data.role !== undefined) updateData.role = data.role;
   if (data.isActive !== undefined) updateData.isActive = data.isActive;
   if (data.allowedModules !== undefined) updateData.allowedModules = JSON.stringify(data.allowedModules);
   await db.update(ingemUsers).set(updateData).where(eq(ingemUsers.id, id));
+}
+
+/**
+ * Migración perezosa: guarda el hash de un usuario que aún no lo tiene,
+ * sin tocar su contraseña actual (columna password legado).
+ */
+export async function setIngemUserPasswordHash(id: number, passwordHash: string) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(ingemUsers).set({ passwordHash }).where(eq(ingemUsers.id, id));
 }
 
 export async function deleteIngemUser(id: number) {

@@ -7,6 +7,7 @@ import * as db from "./db";
 import * as notify from "./notifications";
 import { storagePut } from "./storage";
 import { generateIngemToken } from "./ingemAuth";
+import { hashPassword, verifyPassword } from "./passwordUtils";
 
 // Helper to generate recurring appointment dates
 function generateRecurringDates(startDate: string, endDate: string, type: string): string[] {
@@ -55,7 +56,30 @@ export const appRouter = router({
       .input(z.object({ email: z.string(), password: z.string() }))
       .mutation(async ({ input }) => {
         const user = await db.getIngemUserByEmail(input.email);
-        if (!user || user.password !== input.password || !user.isActive) {
+        if (!user || !user.isActive) {
+          return { success: false as const, error: "Credenciales inválidas" };
+        }
+
+        // Verificación de contraseña con hash como fuente de verdad.
+        let passwordOk = false;
+        if (user.passwordHash) {
+          // Ya migrado: se valida SOLO contra el hash (no se mira el texto plano).
+          passwordOk = await verifyPassword(input.password, user.passwordHash);
+        } else if (user.password != null && user.password === input.password) {
+          // Transición: usuario sin hash todavía. Se acepta la contraseña en
+          // claro por única vez y se genera el hash automáticamente (migración
+          // perezosa), sin modificar la contraseña que usa el usuario.
+          passwordOk = true;
+          try {
+            const newHash = await hashPassword(input.password);
+            await db.setIngemUserPasswordHash(user.id, newHash);
+          } catch {
+            // Si falla el guardado del hash, el login igualmente procede;
+            // se reintentará en el próximo ingreso.
+          }
+        }
+
+        if (!passwordOk) {
           return { success: false as const, error: "Credenciales inválidas" };
         }
         // Generate JWT token for authenticated session
@@ -99,7 +123,9 @@ export const appRouter = router({
         isActive: z.boolean(), allowedModules: z.array(z.string()).optional(),
       }))
       .mutation(async ({ input }) => {
-        const result = await db.createIngemUser(input);
+        const { password, ...rest } = input;
+        const passwordHash = await hashPassword(password);
+        const result = await db.createIngemUser({ ...rest, passwordHash });
         return { id: result.id.toString() };
       }),
     updateUser: ingemAdminProcedure
@@ -109,7 +135,12 @@ export const appRouter = router({
         isActive: z.boolean().optional(), allowedModules: z.array(z.string()).optional(),
       }))
       .mutation(async ({ input }) => {
-        const { id, ...data } = input;
+        const { id, password, ...rest } = input;
+        // Si se envía una nueva contraseña, se guarda su hash (no el texto plano).
+        const data: Record<string, unknown> = { ...rest };
+        if (password !== undefined) {
+          data.passwordHash = await hashPassword(password);
+        }
         await db.updateIngemUser(id, data);
         return { success: true };
       }),
@@ -128,10 +159,25 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const ingemUser = (ctx as any).ingemUser;
         const user = await db.getIngemUserByEmail(ingemUser.email);
-        if (!user || user.password !== input.currentPassword) {
+        if (!user) {
           return { success: false, error: "Contraseña actual incorrecta" };
         }
-        await db.updateIngemUser(user.id, { password: input.newPassword });
+
+        // Verificar la contraseña actual: contra el hash si existe, si no
+        // contra el texto plano legado (transición).
+        let currentOk = false;
+        if (user.passwordHash) {
+          currentOk = await verifyPassword(input.currentPassword, user.passwordHash);
+        } else if (user.password != null) {
+          currentOk = user.password === input.currentPassword;
+        }
+        if (!currentOk) {
+          return { success: false, error: "Contraseña actual incorrecta" };
+        }
+
+        // Guardar la nueva contraseña como hash (nunca en claro).
+        const newHash = await hashPassword(input.newPassword);
+        await db.updateIngemUser(user.id, { passwordHash: newHash });
         return { success: true };
       }),
   }),
