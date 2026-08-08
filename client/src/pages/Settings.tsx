@@ -92,7 +92,10 @@ export function Settings() {
     setBackupLoading(true);
     setBackupMessage(null);
     try {
-      const response = await fetch('/api/trpc/dataExport.exportAll');
+      const token = localStorage.getItem('ingem_auth_token');
+      const response = await fetch('/api/trpc/dataExport.exportAll', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (!response.ok) throw new Error('No autorizado o error del servidor');
       const json = await response.json();
       const data = json.result?.data?.json;

@@ -604,8 +604,9 @@ export const appRouter = router({
   }),
 
   // ========== Data Export (for Google Drive backup) ==========
+  // Solo Administrador: el respaldo incluye datos de toda la empresa.
   dataExport: router({
-    exportAll: ingemProtectedProcedure.query(() => db.exportAllData()),
+    exportAll: ingemAdminProcedure.query(() => db.exportAllData()),
   }),
 });
 

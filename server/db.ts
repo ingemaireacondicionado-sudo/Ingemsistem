@@ -441,6 +441,19 @@ export async function exportAllData() {
     db.select().from(jobs),
     db.select().from(ingemUsers),
   ]);
+  // Nunca exportar datos de autenticación (password/passwordHash/tokens/secretos).
+  // Solo se incluye información administrativa necesaria de cada usuario.
+  const safeIngemUsers = allIngemUsers.map(u => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: u.role,
+    isActive: u.isActive,
+    allowedModules: u.allowedModules,
+    createdAt: u.createdAt,
+    updatedAt: u.updatedAt,
+  }));
+
   return {
     exportDate: new Date().toISOString(),
     customers: allCustomers,
@@ -451,6 +464,6 @@ export async function exportAllData() {
     notes: allNotes,
     transactions: allTransactions,
     jobs: allJobs,
-    ingemUsers: allIngemUsers,
+    ingemUsers: safeIngemUsers,
   };
 }
