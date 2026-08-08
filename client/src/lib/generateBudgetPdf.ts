@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Job, JobProduct } from '@/types/job';
+import { INGEM_LOGO_DATA_URL } from '@/assets/ingemLogoBase64';
 
 // INGEM company data
 const COMPANY = {
@@ -11,7 +12,7 @@ const COMPANY = {
   address: 'Calle 30 N° 2003, Guernica',
   province: 'Buenos Aires, Argentina',
   email: 'ingemaireacondicionado@gmail.com',
-  logo: 'https://files.manuscdn.com/user_upload_by_module/session_file/310419663032558987/CefAnGWPofMsrtoX.jpg',
+  logo: INGEM_LOGO_DATA_URL,
 };
 
 function formatCurrencyPdf(amount: number, currency: string): string {
@@ -32,23 +33,12 @@ export async function generateBudgetPdf(job: Job): Promise<void> {
   const contentWidth = pageWidth - margin * 2;
   let y = margin;
 
-  // Load logo as base64
-  let logoBase64: string | null = null;
-  try {
-    const response = await fetch(COMPANY.logo);
-    const blob = await response.blob();
-    logoBase64 = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    // Continue without logo
-  }
+  // Logo embebido localmente (no depende de internet)
+  const logoBase64: string | null = COMPANY.logo;
 
   // === HEADER ===
   if (logoBase64) {
-    doc.addImage(logoBase64, 'JPEG', margin, y, 25, 25);
+    doc.addImage(logoBase64, 'PNG', margin, y, 25, 25);
   }
 
   const headerX = margin + 30;

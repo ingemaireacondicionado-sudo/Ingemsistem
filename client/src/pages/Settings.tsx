@@ -327,7 +327,7 @@ export function Settings() {
         <CardContent>
           <div className="flex items-center gap-4">
             <img 
-              src={"https://files.manuscdn.com/user_upload_by_module/session_file/310419663032558987/CefAnGWPofMsrtoX.jpg"} 
+              src="/ingem-logo.png" 
               alt="INGEM Logo" 
               className="w-16 h-16 object-contain rounded-lg"
             />

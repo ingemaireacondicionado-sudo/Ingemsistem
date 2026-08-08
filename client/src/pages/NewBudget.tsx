@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { generateBudgetPdf } from '@/lib/generateBudgetPdf';
+import { INGEM_LOGO_DATA_URL } from '@/assets/ingemLogoBase64';
 import { trpc } from '@/lib/trpc';
 import type { Job, JobProduct, JobCurrency } from '@/types/job';
 import { todayStr, addDaysLocal } from '@/lib/dateUtils';
@@ -988,7 +989,7 @@ async function generateBudgetPdfBlob(job: Job): Promise<Blob> {
     address: 'Calle 30 N° 2003, Guernica',
     province: 'Buenos Aires, Argentina',
     email: 'ingemaireacondicionado@gmail.com',
-    logo: 'https://files.manuscdn.com/user_upload_by_module/session_file/310419663032558987/CefAnGWPofMsrtoX.jpg',
+    logo: INGEM_LOGO_DATA_URL,
   };
 
   function fmtCurrency(amount: number, currency: string): string {
@@ -1008,20 +1009,11 @@ async function generateBudgetPdfBlob(job: Job): Promise<Blob> {
   const contentWidth = pageWidth - margin * 2;
   let y = margin;
 
-  // Load logo
-  let logoBase64: string | null = null;
-  try {
-    const response = await fetch(COMPANY.logo);
-    const blob = await response.blob();
-    logoBase64 = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.readAsDataURL(blob);
-    });
-  } catch {}
+  // Logo embebido localmente (no depende de internet)
+  const logoBase64: string | null = COMPANY.logo;
 
   // Header
-  if (logoBase64) doc.addImage(logoBase64, 'JPEG', margin, y, 25, 25);
+  if (logoBase64) doc.addImage(logoBase64, 'PNG', margin, y, 25, 25);
   const headerX = margin + 30;
   doc.setFontSize(18); doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 58, 95);
   doc.text(COMPANY.name, headerX, y + 8);

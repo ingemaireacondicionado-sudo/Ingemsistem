@@ -132,7 +132,7 @@ export function Layout({ children }: LayoutProps) {
           <Link to="/" className="flex items-center gap-4">
             <div className="w-14 h-14 bg-white rounded-xl flex items-center justify-center shadow-sm border border-slate-100">
               <img 
-                src={"https://files.manuscdn.com/user_upload_by_module/session_file/310419663032558987/CefAnGWPofMsrtoX.jpg"} 
+                src="/ingem-logo.png" 
                 alt="INGEM" 
                 className="w-12 h-12 object-contain"
               />
@@ -209,7 +209,7 @@ export function Layout({ children }: LayoutProps) {
               <Link to="/" className="flex items-center gap-3" onClick={() => setSidebarOpen(false)}>
                 <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center shadow-sm border border-slate-100">
                   <img 
-                    src={"https://files.manuscdn.com/user_upload_by_module/session_file/310419663032558987/CefAnGWPofMsrtoX.jpg"} 
+                    src="/ingem-logo.png" 
                     alt="INGEM" 
                     className="w-10 h-10 object-contain"
                   />

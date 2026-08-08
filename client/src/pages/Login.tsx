@@ -40,7 +40,7 @@ export function Login() {
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center mb-4">
             <img 
-              src={"https://files.manuscdn.com/user_upload_by_module/session_file/310419663032558987/CefAnGWPofMsrtoX.jpg"} 
+              src="/ingem-logo.png" 
               alt="INGEM Logo" 
               className="h-24 w-auto object-contain sm:h-32"
             />
