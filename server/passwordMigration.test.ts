@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { ingemUsers } from "../drizzle/schema";
 import { hashPassword, verifyPassword, looksLikeBcryptHash } from "./passwordUtils";
 
@@ -24,9 +24,14 @@ vi.mock("drizzle-orm/mysql2", () => {
     select: () => ({ from: (table: unknown) => makeBuilder(datasetFor(table)) }),
     insert: (_t: unknown) => ({
       values: (v: any) => {
-        const row = { id: store.nextId++, password: null, passwordHash: null, allowedModules: null, ...v };
-        store.users.push(row);
-        return Promise.resolve([{ insertId: row.id }]);
+        const list = Array.isArray(v) ? v : [v];
+        let firstId = 0;
+        for (const item of list) {
+          const row = { id: store.nextId++, password: null, passwordHash: null, allowedModules: null, ...item };
+          store.users.push(row);
+          if (!firstId) firstId = row.id;
+        }
+        return Promise.resolve([{ insertId: firstId }]);
       },
     }),
     update: (_t: unknown) => ({
@@ -59,7 +64,7 @@ store.ingemTable = ingemUsers;
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { generateIngemToken } from "./ingemAuth";
-import { exportAllData } from "./db";
+import { exportAllData, seedIngemUsers } from "./db";
 
 function ctxWith(authHeader?: string): TrpcContext {
   return {
@@ -184,5 +189,40 @@ describe("respaldo no incluye credenciales", () => {
     const user = (data!.ingemUsers[0] ?? {}) as Record<string, unknown>;
     expect(user).not.toHaveProperty("password");
     expect(user).not.toHaveProperty("passwordHash");
+  });
+});
+
+describe("seedIngemUsers — nunca guarda texto plano", () => {
+  const OLD_ENV = { ...process.env };
+  beforeEach(() => {
+    delete process.env.INGEM_SEED_ADMIN_EMAIL;
+    delete process.env.INGEM_SEED_ADMIN_PASSWORD;
+    delete process.env.INGEM_SEED_ADMIN_NAME;
+  });
+  afterAll(() => { process.env = { ...OLD_ENV }; });
+
+  it("con credenciales por entorno crea el admin con hash (password null)", async () => {
+    process.env.INGEM_SEED_ADMIN_EMAIL = "admin@empresa.com";
+    process.env.INGEM_SEED_ADMIN_PASSWORD = "clave-de-entorno";
+    await seedIngemUsers();
+    const created = store.users.find(u => u.email === "admin@empresa.com");
+    expect(created).toBeTruthy();
+    expect(created.password).toBeNull();
+    expect(looksLikeBcryptHash(created.passwordHash)).toBe(true);
+    expect(created.passwordHash).not.toBe("clave-de-entorno");
+    expect(created.role).toBe("admin");
+  });
+
+  it("sin variables de entorno NO crea ningún usuario (seed deshabilitado)", async () => {
+    await seedIngemUsers();
+    expect(store.users).toHaveLength(0);
+  });
+
+  it("no queda ninguna contraseña en texto plano tras el seed", async () => {
+    process.env.INGEM_SEED_ADMIN_EMAIL = "admin2@empresa.com";
+    process.env.INGEM_SEED_ADMIN_PASSWORD = "otra-clave";
+    await seedIngemUsers();
+    const serialized = JSON.stringify(store.users);
+    expect(serialized).not.toContain("otra-clave");
   });
 });

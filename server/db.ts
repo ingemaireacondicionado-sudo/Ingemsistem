@@ -6,6 +6,7 @@ import {
   appointments, notes, transactions, jobs, ingemUsers
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { hashPassword } from './passwordUtils';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -428,16 +429,33 @@ export async function getNextBudgetNumber(): Promise<string> {
 }
 
 // ========== Seed initial INGEM users ==========
+// Crea un único administrador inicial SOLO si la tabla está vacía y si se
+// proveen las credenciales por variables de entorno. Nunca guarda contraseñas
+// en texto plano ni usa credenciales hardcodeadas. Si falta la contraseña, el
+// seed se deshabilita de forma segura (no crea ningún usuario).
 export async function seedIngemUsers() {
   const db = await getDb();
   if (!db) return;
+
+  const email = process.env.INGEM_SEED_ADMIN_EMAIL;
+  const password = process.env.INGEM_SEED_ADMIN_PASSWORD;
+  const name = process.env.INGEM_SEED_ADMIN_NAME || "Administrador";
+
+  if (!email || !password) {
+    console.warn(
+      "[Seed] Deshabilitado: definí INGEM_SEED_ADMIN_EMAIL e INGEM_SEED_ADMIN_PASSWORD para crear el admin inicial."
+    );
+    return;
+  }
+
   const existing = await db.select().from(ingemUsers).limit(1);
   if (existing.length > 0) return;
+
+  const passwordHash = await hashPassword(password);
   await db.insert(ingemUsers).values([
-    { name: "Maxi", email: "maxi@ingem.com", password: "maxi", role: "admin", isActive: true },
-    { name: "Ludmila", email: "ludmila@ingem.com", password: "ludmila", role: "manager", isActive: true },
+    { name, email, password: null, passwordHash, role: "admin", isActive: true },
   ]);
-  console.log("[Seed] Initial INGEM users created");
+  console.log("[Seed] Administrador inicial creado (con hash).");
 }
 
 // ========== Export all data (for Google Drive backup) ==========

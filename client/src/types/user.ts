@@ -83,27 +83,3 @@ export function canEdit(role: UserRole, entity: string): boolean {
 export function canDelete(role: UserRole, entity: string): boolean {
   return ROLE_PERMISSIONS[role].canDelete.includes(entity);
 }
-
-// Usuarios iniciales
-export const INITIAL_USERS: User[] = [
-  {
-    id: '1',
-    name: 'Maxi',
-    email: 'maxi@ingem.com',
-    role: 'admin',
-    password: 'maxi',
-    isActive: true,
-    createdAt: '2024-01-01',
-    updatedAt: '2024-01-01',
-  },
-  {
-    id: '2',
-    name: 'Ludmila',
-    email: 'ludmila@ingem.com',
-    role: 'manager',
-    password: 'ludmila',
-    isActive: true,
-    createdAt: '2024-01-01',
-    updatedAt: '2024-01-01',
-  },
-];
