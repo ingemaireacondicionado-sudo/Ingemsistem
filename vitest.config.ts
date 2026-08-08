@@ -15,5 +15,10 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["server/**/*.test.ts", "server/**/*.spec.ts"],
+    // JWT_SECRET es obligatorio en el código; se provee un valor SOLO para los
+    // tests (no afecta a producción ni a variables reales).
+    env: {
+      JWT_SECRET: "test-only-jwt-secret-not-a-real-secret",
+    },
   },
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { generateIngemToken, verifyIngemToken, extractTokenFromHeader } from "./ingemAuth";
+import { SignJWT } from "jose";
+import { generateIngemToken, verifyIngemToken, extractTokenFromHeader, assertJwtSecret } from "./ingemAuth";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
@@ -158,6 +159,58 @@ describe("INGEM JWT Auth", () => {
           isActive: true,
         })
       ).rejects.toThrow("No tienes permisos de administrador.");
+    });
+  });
+
+  describe("JWT_SECRET obligatorio (sin fallback)", () => {
+    it("con un secreto válido, firma y verificación funcionan", async () => {
+      // El entorno de test provee JWT_SECRET; el flujo completo debe operar.
+      const token = await generateIngemToken({ userId: 7, email: "a@b.com", name: "A", role: "admin" });
+      const decoded = await verifyIngemToken(token);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.userId).toBe(7);
+    });
+
+    it("assertJwtSecret falla de forma segura si el secreto está vacío o ausente", () => {
+      expect(() => assertJwtSecret(undefined)).toThrow("JWT_SECRET is required");
+      expect(() => assertJwtSecret(null)).toThrow("JWT_SECRET is required");
+      expect(() => assertJwtSecret("")).toThrow("JWT_SECRET is required");
+      expect(() => assertJwtSecret("   ")).toThrow("JWT_SECRET is required");
+    });
+
+    it("assertJwtSecret acepta un secreto no vacío", () => {
+      expect(() => assertJwtSecret("un-secreto-cualquiera")).not.toThrow();
+    });
+
+    it("el mensaje de error NO revela el valor del secreto", () => {
+      try {
+        assertJwtSecret("");
+      } catch (e) {
+        expect((e as Error).message).toBe("JWT_SECRET is required");
+      }
+    });
+
+    it("un token firmado con el viejo fallback eliminado NO verifica", async () => {
+      // Prueba explícita de que el fallback 'ingem-fallback-secret-key-2024' ya no sirve.
+      const fallbackKey = new TextEncoder().encode("ingem-fallback-secret-key-2024");
+      const forged = await new SignJWT({ userId: 1, email: "x@y.com", name: "X", role: "admin" })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt()
+        .setExpirationTime("7d")
+        .sign(fallbackKey);
+      const decoded = await verifyIngemToken(forged);
+      expect(decoded).toBeNull();
+    });
+
+    it("un token firmado con un secreto incorrecto NO verifica", async () => {
+      const wrongKey = new TextEncoder().encode("otro-secreto-distinto");
+      const forged = await new SignJWT({ userId: 2, email: "z@z.com", name: "Z", role: "admin" })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt()
+        .setExpirationTime("7d")
+        .sign(wrongKey);
+      const decoded = await verifyIngemToken(forged);
+      expect(decoded).toBeNull();
     });
   });
 });
