@@ -1,4 +1,15 @@
-export type UserRole = 'admin' | 'manager' | 'technician' | 'viewer';
+// Los permisos por rol viven en una fuente única compartida con el backend.
+// Este módulo re-exporta esa fuente y conserva los tipos de usuario del frontend.
+export type { UserRole } from '@shared/permissions';
+export {
+  ROLE_PERMISSIONS,
+  hasModuleAccess,
+  canCreate,
+  canEdit,
+  canDelete,
+} from '@shared/permissions';
+
+import type { UserRole } from '@shared/permissions';
 
 export interface User {
   id: string;
@@ -19,67 +30,4 @@ export interface UserFormData {
   password?: string;
   isActive: boolean;
   allowedModules?: string[];
-}
-
-// Permisos por rol
-export const ROLE_PERMISSIONS: Record<UserRole, {
-  label: string;
-  description: string;
-  modules: string[];
-  canCreate: string[];
-  canEdit: string[];
-  canDelete: string[];
-}> = {
-  admin: {
-    label: 'Administrador',
-    description: 'Acceso completo a todo el sistema',
-    modules: ['dashboard', 'customers', 'suppliers', 'products', 'calendar', 'technicians', 'notes', 'finance', 'jobs', 'reports', 'users', 'settings'],
-    canCreate: ['customers', 'suppliers', 'products', 'appointments', 'technicians', 'notes', 'transactions', 'jobs', 'users'],
-    canEdit: ['customers', 'suppliers', 'products', 'appointments', 'technicians', 'notes', 'transactions', 'jobs', 'users'],
-    canDelete: ['customers', 'suppliers', 'products', 'appointments', 'technicians', 'notes', 'transactions', 'jobs', 'users'],
-  },
-  manager: {
-    label: 'Gerente',
-    description: 'Gestión operativa sin acceso a configuración de usuarios',
-    modules: ['dashboard', 'customers', 'suppliers', 'products', 'calendar', 'technicians', 'notes', 'finance', 'jobs', 'reports', 'settings'],
-    canCreate: ['customers', 'suppliers', 'products', 'appointments', 'technicians', 'notes', 'transactions', 'jobs'],
-    canEdit: ['customers', 'suppliers', 'products', 'appointments', 'technicians', 'notes', 'transactions', 'jobs'],
-    canDelete: ['customers', 'suppliers', 'products', 'appointments', 'notes', 'transactions', 'jobs'],
-  },
-  technician: {
-    label: 'Técnico',
-    description: 'Acceso a agenda, trabajos asignados y notas',
-    modules: ['dashboard', 'calendar', 'jobs', 'notes'],
-    canCreate: ['notes'],
-    canEdit: ['jobs'],
-    canDelete: [],
-  },
-  viewer: {
-    label: 'Visualizador',
-    description: 'Solo lectura de información básica',
-    modules: ['dashboard', 'customers', 'products', 'calendar'],
-    canCreate: [],
-    canEdit: [],
-    canDelete: [],
-  },
-};
-
-// Función para verificar si un usuario tiene acceso a un módulo
-export function hasModuleAccess(role: UserRole, module: string): boolean {
-  return ROLE_PERMISSIONS[role].modules.includes(module);
-}
-
-// Función para verificar si un usuario puede crear
-export function canCreate(role: UserRole, entity: string): boolean {
-  return ROLE_PERMISSIONS[role].canCreate.includes(entity);
-}
-
-// Función para verificar si un usuario puede editar
-export function canEdit(role: UserRole, entity: string): boolean {
-  return ROLE_PERMISSIONS[role].canEdit.includes(entity);
-}
-
-// Función para verificar si un usuario puede eliminar
-export function canDelete(role: UserRole, entity: string): boolean {
-  return ROLE_PERMISSIONS[role].canDelete.includes(entity);
 }

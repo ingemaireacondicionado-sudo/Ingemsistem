@@ -1,7 +1,10 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, protectedProcedure, ingemProtectedProcedure, ingemAdminProcedure, router } from "./_core/trpc";
+import {
+  publicProcedure, protectedProcedure, ingemProtectedProcedure, ingemAdminProcedure, router,
+  ingemCreateProcedure, ingemEditProcedure, ingemDeleteProcedure, ingemRegisterPaymentProcedure,
+} from "./_core/trpc";
 import { z } from "zod";
 import * as db from "./db";
 import * as notify from "./notifications";
@@ -186,7 +189,7 @@ export const appRouter = router({
   customers: router({
     list: ingemProtectedProcedure.query(() => db.getCustomers()),
     getById: ingemProtectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getCustomerById(input.id)),
-    create: ingemProtectedProcedure
+    create: ingemCreateProcedure("customers")
       .input(z.object({
         firstName: z.string(), lastName: z.string(), email: z.string().default(""),
         phone: z.string().default(""), cuit: z.string().default(""), company: z.string().default(""),
@@ -200,7 +203,7 @@ export const appRouter = router({
         notify.notifyCustomerCreated(input).catch(() => {});
         return result;
       }),
-    update: ingemProtectedProcedure
+    update: ingemEditProcedure("customers")
       .input(z.object({
         id: z.number(), firstName: z.string().optional(), lastName: z.string().optional(),
         email: z.string().optional(), phone: z.string().optional(), cuit: z.string().optional(),
@@ -211,14 +214,14 @@ export const appRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input }) => { const { id, ...data } = input; await db.updateCustomer(id, data); return { success: true }; }),
-    delete: ingemProtectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteCustomer(input.id)),
+    delete: ingemDeleteProcedure("customers").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteCustomer(input.id)),
   }),
 
   // ========== Suppliers ==========
   suppliers: router({
     list: ingemProtectedProcedure.query(() => db.getSuppliers()),
     getById: ingemProtectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getSupplierById(input.id)),
-    create: ingemProtectedProcedure
+    create: ingemCreateProcedure("suppliers")
       .input(z.object({
         name: z.string(), contactName: z.string().default(""), email: z.string().default(""),
         phone: z.string().default(""), cuit: z.string().default(""), category: z.string().default("general"),
@@ -227,7 +230,7 @@ export const appRouter = router({
         isActive: z.boolean().default(true),
       }))
       .mutation(async ({ input }) => db.createSupplier(input)),
-    update: ingemProtectedProcedure
+    update: ingemEditProcedure("suppliers")
       .input(z.object({
         id: z.number(), name: z.string().optional(), contactName: z.string().optional(),
         email: z.string().optional(), phone: z.string().optional(), cuit: z.string().optional(),
@@ -236,14 +239,14 @@ export const appRouter = router({
         rating: z.number().optional(), isActive: z.boolean().optional(),
       }))
       .mutation(async ({ input }) => { const { id, ...data } = input; await db.updateSupplier(id, data); return { success: true }; }),
-    delete: ingemProtectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteSupplier(input.id)),
+    delete: ingemDeleteProcedure("suppliers").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteSupplier(input.id)),
   }),
 
   // ========== Products ==========
   products: router({
     list: ingemProtectedProcedure.query(() => db.getProducts()),
     getById: ingemProtectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getProductById(input.id)),
-    create: ingemProtectedProcedure
+    create: ingemCreateProcedure("products")
       .input(z.object({
         name: z.string(), description: z.string().default(""), category: z.string().default("repuestos"),
         brand: z.string().default(""), model: z.string().default(""), sku: z.string().default(""),
@@ -253,7 +256,7 @@ export const appRouter = router({
         location: z.string().default(""), isActive: z.boolean().default(true),
       }))
       .mutation(async ({ input }) => db.createProduct(input)),
-    update: ingemProtectedProcedure
+    update: ingemEditProcedure("products")
       .input(z.object({
         id: z.number(), name: z.string().optional(), description: z.string().optional(),
         category: z.string().optional(), brand: z.string().optional(), model: z.string().optional(),
@@ -263,14 +266,14 @@ export const appRouter = router({
         location: z.string().optional(), isActive: z.boolean().optional(),
       }))
       .mutation(async ({ input }) => { const { id, ...data } = input; await db.updateProduct(id, data); return { success: true }; }),
-    delete: ingemProtectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteProduct(input.id)),
+    delete: ingemDeleteProcedure("products").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteProduct(input.id)),
   }),
 
   // ========== Technicians ==========
   technicians: router({
     list: ingemProtectedProcedure.query(() => db.getTechnicians()),
     getById: ingemProtectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getTechnicianById(input.id)),
-    create: ingemProtectedProcedure
+    create: ingemCreateProcedure("technicians")
       .input(z.object({
         firstName: z.string(), lastName: z.string(), email: z.string().default(""),
         phone: z.string().default(""), specialty: z.string().default(""),
@@ -280,7 +283,7 @@ export const appRouter = router({
         notes: z.string().default(""), documents: z.string().default("[]"),
       }))
       .mutation(async ({ input }) => db.createTechnician(input)),
-    update: ingemProtectedProcedure
+    update: ingemEditProcedure("technicians")
       .input(z.object({
         id: z.number(), firstName: z.string().optional(), lastName: z.string().optional(),
         email: z.string().optional(), phone: z.string().optional(), specialty: z.string().optional(),
@@ -290,14 +293,14 @@ export const appRouter = router({
         notes: z.string().optional(), documents: z.string().optional(),
       }))
       .mutation(async ({ input }) => { const { id, ...data } = input; await db.updateTechnician(id, data); return { success: true }; }),
-    delete: ingemProtectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTechnician(input.id)),
+    delete: ingemDeleteProcedure("technicians").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTechnician(input.id)),
   }),
 
   // ========== Appointments ==========
   appointments: router({
     list: ingemProtectedProcedure.query(() => db.getAppointments()),
     getById: ingemProtectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getAppointmentById(input.id)),
-    create: ingemProtectedProcedure
+    create: ingemCreateProcedure("appointments")
       .input(z.object({
         title: z.string(), description: z.string().default(""), date: z.string(),
         time: z.string().default(""), endTime: z.string().default(""),
@@ -348,7 +351,7 @@ export const appRouter = router({
         }).catch(() => {});
         return result;
       }),
-    update: ingemProtectedProcedure
+    update: ingemEditProcedure("appointments")
       .input(z.object({
         id: z.number(), title: z.string().optional(), description: z.string().optional(),
         date: z.string().optional(), time: z.string().optional(), endTime: z.string().optional(),
@@ -385,8 +388,8 @@ export const appRouter = router({
         await db.updateAppointment(id, updateData);
         return { success: true };
       }),
-    // Complete appointment with post-visit notes
-    complete: ingemProtectedProcedure
+    // Complete appointment with post-visit notes (editar turno)
+    complete: ingemEditProcedure("appointments")
       .input(z.object({
         id: z.number(),
         completionNotes: z.string(),
@@ -411,20 +414,20 @@ export const appRouter = router({
         return { success: true };
       }),
     // Delete all future recurring appointments in a group
-    deleteRecurrenceGroup: ingemProtectedProcedure
+    deleteRecurrenceGroup: ingemDeleteProcedure("appointments")
       .input(z.object({ recurrenceGroupId: z.string(), fromDate: z.string().optional() }))
       .mutation(async ({ input }) => {
         await db.deleteRecurrenceGroup(input.recurrenceGroupId, input.fromDate);
         return { success: true };
       }),
-    delete: ingemProtectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteAppointment(input.id)),
+    delete: ingemDeleteProcedure("appointments").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteAppointment(input.id)),
   }),
 
   // ========== Notes ==========
   notes: router({
     list: ingemProtectedProcedure.query(() => db.getNotes()),
     getById: ingemProtectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getNoteById(input.id)),
-    create: ingemProtectedProcedure
+    create: ingemCreateProcedure("notes")
       .input(z.object({
         title: z.string(), content: z.string().default(""),
         priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
@@ -447,7 +450,7 @@ export const appRouter = router({
         }
         return result;
       }),
-    update: ingemProtectedProcedure
+    update: ingemEditProcedure("notes")
       .input(z.object({
         id: z.number(), title: z.string().optional(), content: z.string().optional(),
         priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
@@ -460,14 +463,14 @@ export const appRouter = router({
         documentNumber: z.string().optional(),
       }))
       .mutation(async ({ input }) => { const { id, ...data } = input; await db.updateNote(id, data); return { success: true }; }),
-    delete: ingemProtectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteNote(input.id)),
+    delete: ingemDeleteProcedure("notes").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteNote(input.id)),
   }),
 
   // ========== Transactions ==========
   transactions: router({
     list: ingemProtectedProcedure.query(() => db.getTransactions()),
     getById: ingemProtectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getTransactionById(input.id)),
-    create: ingemProtectedProcedure
+    create: ingemCreateProcedure("transactions")
       .input(z.object({
         type: z.enum(["income", "expense"]), category: z.string(), description: z.string().default(""),
         amount: z.string(), date: z.string(), paymentMethod: z.string().default("cash"),
@@ -482,7 +485,7 @@ export const appRouter = router({
         notes: z.string().default(""),
       }))
       .mutation(async ({ input }) => db.createTransaction(input)),
-    update: ingemProtectedProcedure
+    update: ingemEditProcedure("transactions")
       .input(z.object({
         id: z.number(), type: z.enum(["income", "expense"]).optional(), category: z.string().optional(),
         description: z.string().optional(), amount: z.string().optional(), date: z.string().optional(),
@@ -497,7 +500,7 @@ export const appRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input }) => { const { id, ...data } = input; await db.updateTransaction(id, data); return { success: true }; }),
-    delete: ingemProtectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTransaction(input.id)),
+    delete: ingemDeleteProcedure("transactions").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTransaction(input.id)),
   }),
 
   // ========== Jobs ==========
@@ -505,7 +508,7 @@ export const appRouter = router({
     list: ingemProtectedProcedure.query(() => db.getJobs()),
     nextBudgetNumber: ingemProtectedProcedure.query(() => db.getNextBudgetNumber()),
     getById: ingemProtectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getJobById(input.id)),
-    create: ingemProtectedProcedure
+    create: ingemCreateProcedure("jobs")
       .input(z.object({
         jobNumber: z.string(), title: z.string(), description: z.string().default(""),
         status: z.enum(["pending", "in-progress", "completed", "invoiced", "collected"]).default("pending"),
@@ -528,7 +531,7 @@ export const appRouter = router({
         }).catch(() => {});
         return result;
       }),
-    update: ingemProtectedProcedure
+    update: ingemEditProcedure("jobs")
       .input(z.object({
         id: z.number(), jobNumber: z.string().optional(), title: z.string().optional(),
         description: z.string().optional(),
@@ -559,8 +562,8 @@ export const appRouter = router({
         await db.updateJob(id, data);
         return { success: true };
       }),
-    delete: ingemProtectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteJob(input.id)),
-    registerPayment: ingemProtectedProcedure
+    delete: ingemDeleteProcedure("jobs").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteJob(input.id)),
+    registerPayment: ingemRegisterPaymentProcedure
       .input(z.object({
         jobId: z.number(),
         amount: z.string(),
