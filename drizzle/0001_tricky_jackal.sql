@@ -1,0 +1,183 @@
+CREATE TABLE `appointments` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`title` varchar(200) NOT NULL,
+	`description` text,
+	`date` varchar(20) NOT NULL,
+	`time` varchar(10) DEFAULT '',
+	`endTime` varchar(10) DEFAULT '',
+	`appointmentStatus` enum('pending','confirmed','completed','cancelled') NOT NULL DEFAULT 'pending',
+	`customerId` int,
+	`clientName` varchar(200) DEFAULT '',
+	`clientPhone` varchar(50) DEFAULT '',
+	`technicianIds` text,
+	`technicianNames` text,
+	`productIds` text,
+	`productNames` text,
+	`address` text,
+	`notes` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `appointments_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `customers` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`firstName` varchar(100) NOT NULL,
+	`lastName` varchar(100) NOT NULL,
+	`email` varchar(320) DEFAULT '',
+	`phone` varchar(50) DEFAULT '',
+	`cuit` varchar(20) DEFAULT '',
+	`company` varchar(200) DEFAULT '',
+	`position` varchar(100) DEFAULT '',
+	`status` enum('active','inactive','prospect') NOT NULL DEFAULT 'prospect',
+	`customerType` enum('company','individual') NOT NULL DEFAULT 'company',
+	`address` text,
+	`city` varchar(100) DEFAULT '',
+	`country` varchar(100) DEFAULT 'Argentina',
+	`notes` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`lastContact` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `customers_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `ingem_users` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`name` varchar(100) NOT NULL,
+	`email` varchar(320) NOT NULL,
+	`password` varchar(255) NOT NULL,
+	`ingemRole` enum('admin','manager','technician','viewer') NOT NULL DEFAULT 'viewer',
+	`isActive` boolean NOT NULL DEFAULT true,
+	`allowedModules` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `ingem_users_id` PRIMARY KEY(`id`),
+	CONSTRAINT `ingem_users_email_unique` UNIQUE(`email`)
+);
+--> statement-breakpoint
+CREATE TABLE `jobs` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`jobNumber` varchar(50) NOT NULL,
+	`title` varchar(200) NOT NULL,
+	`description` text,
+	`jobStatus` enum('pending','in-progress','completed','invoiced','collected') NOT NULL DEFAULT 'pending',
+	`customerId` int,
+	`customerName` varchar(200) DEFAULT '',
+	`customerPhone` varchar(50) DEFAULT '',
+	`customerCuit` varchar(20) DEFAULT '',
+	`technicianIds` text,
+	`technicianNames` text,
+	`productIds` text,
+	`budgetNumber` varchar(50) DEFAULT '',
+	`budgetAmount` decimal(12,2) DEFAULT '0',
+	`invoiceNumber` varchar(50) DEFAULT '',
+	`invoiceAmount` decimal(12,2) DEFAULT '0',
+	`purchaseOrder` varchar(50) DEFAULT '',
+	`paymentStatus` varchar(50) DEFAULT 'pending',
+	`startDate` varchar(20) DEFAULT '',
+	`endDate` varchar(20) DEFAULT '',
+	`notes` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `jobs_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `notes` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`title` varchar(200) NOT NULL,
+	`content` text,
+	`priority` enum('low','medium','high','urgent') NOT NULL DEFAULT 'medium',
+	`noteStatus` enum('pending','in-progress','completed') NOT NULL DEFAULT 'pending',
+	`category` varchar(100) DEFAULT 'general',
+	`dueDate` varchar(20) DEFAULT '',
+	`assignedTo` varchar(100) DEFAULT '',
+	`createdBy` varchar(100) DEFAULT '',
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `notes_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `products` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`name` varchar(200) NOT NULL,
+	`description` text,
+	`category` varchar(100) DEFAULT 'repuestos',
+	`brand` varchar(100) DEFAULT '',
+	`model` varchar(100) DEFAULT '',
+	`sku` varchar(50) DEFAULT '',
+	`costPrice` decimal(12,2) DEFAULT '0',
+	`salePrice` decimal(12,2) DEFAULT '0',
+	`stock` int DEFAULT 0,
+	`minStock` int DEFAULT 0,
+	`supplierId` int,
+	`unit` varchar(20) DEFAULT 'unidad',
+	`location` varchar(100) DEFAULT '',
+	`isActive` boolean NOT NULL DEFAULT true,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `products_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `suppliers` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`name` varchar(200) NOT NULL,
+	`contactName` varchar(100) DEFAULT '',
+	`email` varchar(320) DEFAULT '',
+	`phone` varchar(50) DEFAULT '',
+	`cuit` varchar(20) DEFAULT '',
+	`category` varchar(100) DEFAULT 'general',
+	`address` text,
+	`city` varchar(100) DEFAULT '',
+	`country` varchar(100) DEFAULT 'Argentina',
+	`website` varchar(500) DEFAULT '',
+	`notes` text,
+	`rating` int DEFAULT 0,
+	`isActive` boolean NOT NULL DEFAULT true,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `suppliers_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `technicians` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`firstName` varchar(100) NOT NULL,
+	`lastName` varchar(100) NOT NULL,
+	`email` varchar(320) DEFAULT '',
+	`phone` varchar(50) DEFAULT '',
+	`specialty` varchar(200) DEFAULT '',
+	`isActive` boolean NOT NULL DEFAULT true,
+	`hireDate` varchar(20) DEFAULT '',
+	`address` text,
+	`city` varchar(100) DEFAULT '',
+	`emergencyContact` varchar(100) DEFAULT '',
+	`emergencyPhone` varchar(50) DEFAULT '',
+	`notes` text,
+	`documents` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `technicians_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `transactions` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`transactionType` enum('income','expense') NOT NULL,
+	`category` varchar(100) NOT NULL,
+	`description` varchar(500) DEFAULT '',
+	`amount` decimal(12,2) NOT NULL,
+	`date` varchar(20) NOT NULL,
+	`paymentMethod` varchar(50) DEFAULT 'cash',
+	`transactionStatus` enum('pending','completed','cancelled') NOT NULL DEFAULT 'completed',
+	`reference` varchar(100) DEFAULT '',
+	`customerId` int,
+	`customerName` varchar(200) DEFAULT '',
+	`supplierId` int,
+	`supplierName` varchar(200) DEFAULT '',
+	`invoiceType` varchar(10) DEFAULT '',
+	`invoiceNumber` varchar(50) DEFAULT '',
+	`ivaRate` decimal(5,2) DEFAULT '21',
+	`ivaAmount` decimal(12,2) DEFAULT '0',
+	`totalWithIva` decimal(12,2) DEFAULT '0',
+	`notes` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `transactions_id` PRIMARY KEY(`id`)
+);

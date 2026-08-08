@@ -1,0 +1,313 @@
+# Project TODO
+
+- [x] Resolver conflictos de merge del upgrade (package.json, react-router-dom)
+- [x] Crear esquema de base de datos para todas las entidades (clientes, proveedores, productos, técnicos, turnos, notas, transacciones, trabajos, usuarios internos)
+- [x] Crear API backend con tRPC para todas las entidades
+- [x] Migrar frontend de localStorage a API calls con tRPC
+- [x] Implementar botón de respaldo/exportación de datos en Configuración
+- [x] Probar y verificar todo el sistema
+- [x] Migrar aplicación INGEM original al proyecto webdev de Manus
+- [x] Configurar Tailwind CSS v4 y estilos compatibles
+- [x] Resolver errores de TypeScript y compilación
+- [x] Actualizar proyecto a full-stack con base de datos (web-db-user)
+- [x] Seed de usuarios iniciales (Maxi admin, Ludmila gerente)
+- [x] Migrar AuthContext de localStorage a API calls
+- [x] Corregir flujo async de creación (mutateAsync con ID real de DB)
+- [x] Implementar endpoint de exportación de datos completa
+- [x] Escribir tests vitest para API (auth, customers, export)
+- [x] Verificar login funcional en navegador
+- [x] Verificar creación de clientes con redirección correcta
+- [x] Sincronización automática de respaldo a Google Drive
+- [ ] Importación de datos desde archivo JSON (futuro)
+- [x] Configurar servicio de notificaciones (Manus Notification System)
+- [x] Implementar servicio de notificaciones en el backend (server/notifications.ts)
+- [x] Notificación cuando un trabajo se crea o cambia de estado
+- [x] Notificación cuando se crea o modifica un turno/cita
+- [x] Notificación cuando se crea una nota urgente
+- [x] Configurar email destino: ingemaireacondicionado@gmail.com
+- [x] Notificación cuando se crea un nuevo cliente
+- [x] Tests vitest para notificaciones (11 tests pasando)
+- [x] Bug: En la pantalla de login aparece "Mamá" en lugar de "Maxi" (corregido: sync automático de datos de usuario desde servidor al cargar la app)
+- [x] Bug: La sección de Notas queda en blanco, no se puede entrar (corregido: safe fallbacks para lookups de status/priority)
+- [x] Bug: No se pueden eliminar turnos/citas desde la sección Agenda (corregido: se perdía la referencia al turno al cerrar el diálogo de detalle)
+- [x] Mejora: Formulario de clientes - mostrar solo campos de empresa cuando es tipo Empresa, y solo campos personales cuando es Particular
+- [x] Panel de Reportes y Gráficos interactivos
+  - [x] Gráfico de ingresos vs egresos por mes
+  - [x] Gráfico de trabajos por estado
+  - [x] Gráfico de trabajos completados por técnico
+  - [x] Gráfico de clientes nuevos por período
+  - [x] Gráfico de distribución de turnos por estado
+  - [x] KPIs resumen (facturación total, ticket promedio, tasa de cobro)
+  - [x] Agregar ruta y entrada en sidebar
+- [x] Mejora: Visualización móvil / responsive
+  - [x] Sidebar: menú hamburguesa funcional, overlay al abrir, cierre automático al navegar
+  - [x] Dashboard: tarjetas apiladas, textos legibles, accesos rápidos adaptados
+  - [x] Listas (Clientes, Proveedores, etc.): tablas scrolleables o cards en mobile
+  - [x] Formularios: inputs full-width, botones accesibles
+  - [x] Calendario/Agenda: vista adaptada a pantalla chica
+  - [x] Reportes: gráficos responsive, KPIs apilados
+  - [x] Header: nombre de página y usuario compactos
+- [x] Mejora: Vistas semanal y diaria en Agenda/Calendario
+  - [x] Selector de vista (Año / Mes / Semana / Día / Lista)
+  - [x] Vista semanal con franjas horarias (07:00-20:00) y columnas por día
+  - [x] Vista diaria detallada con franjas horarias y datos completos del turno
+  - [x] Navegación entre semanas/días con botones anterior/siguiente
+  - [x] Mantener vistas existentes (año, mes, lista) como opción
+  - [x] Línea roja de hora actual en vistas semanal y diaria
+  - [x] Click en franja vacía para crear turno rápido con fecha/hora pre-cargada
+- [x] Búsqueda global (Ctrl+K) - Command Palette
+  - [x] Componente GlobalSearch con diálogo modal
+  - [x] Buscar en clientes, proveedores, productos, técnicos, turnos, notas, trabajos, transacciones
+  - [x] Navegación rápida a resultados con Enter o click
+  - [x] Atajo de teclado Ctrl+K / Cmd+K para abrir
+  - [x] Acciones rápidas (Nuevo Cliente, Nuevo Turno, etc.)
+  - [x] Navegación directa a secciones
+  - [x] Badges de estado en resultados
+  - [x] Integrar en el Layout (header) con SearchContext
+- [x] Historial completo por cliente
+  - [x] Página de historial con trabajos, turnos, transacciones y notas del cliente
+  - [x] Timeline visual con todos los eventos ordenados por fecha
+  - [x] Resumen de totales (facturado, cobrado, pendiente) con KPIs
+  - [x] Tabs: Todo, Trabajos, Turnos, Finanzas, Notas con contadores
+  - [x] Acceso desde la lista de clientes (Ver detalles)
+- [x] Mejora: Agregar CUIT comprador y CUIT vendedor en transacciones de Finanzas
+  - [x] Agregar campos cuitComprador y cuitVendedor en esquema de base de datos
+  - [x] Actualizar API para manejar los nuevos campos
+  - [x] Agregar campos CUIT en formulario de transacciones
+  - [x] Mostrar CUIT en la lista de transacciones
+- [x] Mejora Dashboard: Notas mostrar pendientes y resaltar en rojo para Ludmila
+  - [x] Cambiar sección Notas del Dashboard para mostrar notas pendientes del usuario logueado
+  - [x] Resaltar en rojo las notas pendientes cuando el usuario es Ludmila (tarjeta módulo + card Notas Pendientes)
+- [x] Mejora móvil: Finanzas y Trabajos se ven demasiado grandes en celular
+  - [x] Reducir tamaños de texto, padding y espaciado en FinanceList para mobile (cards compactas, textos xs/sm)
+  - [x] Reducir tamaños de texto, padding y espaciado en JobsList para mobile (cards en vez de tabla)
+  - [x] Ajustar tablas/cards para pantallas chicas (tabla oculta en mobile, cards compactas visibles)
+- [x] Mejora: Agregar divisa (Pesos/Dólares) en Trabajos
+  - [x] Agregar campo currency en tipo Job y formulario (almacenado en meta JSON)
+  - [x] Agregar selector de divisa en formulario de trabajos (botones ARS/USD)
+  - [x] Mostrar símbolo de divisa ($/ US$) en lista de trabajos, detalle y dashboard
+  - [x] formatCurrency en job.ts acepta parámetro currency para formatear correctamente
+- [x] Mejora: Vista Pipeline en Trabajos (seguimiento de pendientes)
+  - [x] Lógica de clasificación por etapas: Presup. pendientes, OC pendientes, OC sin iniciar, En ejecución, Facturación pend., Cobro pend.
+  - [x] Componente visual Pipeline con tarjetas por etapa y totales por divisa (ARS/USD)
+  - [x] Integrar vista Pipeline en la página de Trabajos con toggle lista/pipeline
+  - [x] Acciones rápidas para mover trabajos entre etapas (aprobar presup., cargar OC, marcar completado, etc.)
+  - [x] Indicadores de antigüedad/urgencia (días desde última acción)
+- [x] Mejora: Widget resumen Pipeline en Dashboard
+  - [x] Crear componente PipelineSummary con contadores por etapa
+  - [x] Integrar widget en el Dashboard con link a vista Pipeline
+- [x] Mejora: Optimización vista móvil
+  - [x] Mejorar sidebar/navegación en móvil (bottom nav bar con 5 items, header compacto h-14)
+  - [x] Mejorar Dashboard en móvil (cards grid-cols-2, pipeline widget compacto, spacing reducido)
+  - [x] Mejorar Trabajos lista y pipeline en móvil (filtros scrolleables, cards compactas)
+  - [x] Mejorar Clientes en móvil (header compacto, filtros side-by-side, cards con truncate)
+  - [x] Revisar spacing, tipografía y touch targets en todo el sistema (pb-20 para bottom nav)
+- [x] Mejora: Agregar campos Cliente y Presupuesto/Factura en Notas
+  - [x] Agregar columnas relatedCustomerId y documentReference en esquema de DB (notas)
+  - [x] Actualizar API para manejar los nuevos campos opcionales
+  - [x] Agregar selector de Cliente (opcional, con búsqueda) en formulario de Notas
+  - [x] Agregar campo Presupuesto/Factura con selector de tipo y número en formulario de Notas
+  - [x] Mostrar Cliente y Presupuesto/Factura en lista, detalle y vista previa de Notas
+- [x] Bug: Calendario marca mal las fechas al entrar (timezone UTC vs local)
+  - [x] Diagnosticar: toISOString() devuelve UTC, causando desfase de 1 día en UTC-3
+  - [x] Corregir en Calendar.tsx, Dashboard.tsx, AppointmentForm.tsx, JobForm.tsx
+  - [x] Corregir en useAppointments.ts, useNotes.ts, useTransactions.ts, FinanceList.tsx, NotesList.tsx
+  - [x] Crear dateUtils.ts con función toLocalDateString() reutilizable
+  - [x] Corregir errores TS en CustomerDetail.tsx (invoiceAmount -> totalAmount)
+  - [x] Corregir errores TS en GlobalSearch.tsx (clientName -> relatedClientName)
+  - [x] Verificar: 0 errores TypeScript, calendario muestra fecha correcta
+- [x] Mejora: Agregar filtros rápidos Finalizado y Pendiente en lista de Trabajos
+  - [x] Botones: Todos, Pendientes, Finalizados, Presupuestar, Facturar, Facturado, Cobrar, Cobrado
+  - [x] Cada botón muestra contador y montos donde aplica
+- [x] Mejora: Módulo de Cobranzas Pendientes (Facturas por cobrar)
+  - [x] Crear página InvoiceTracker con listado de facturas emitidas sin cobrar
+  - [x] KPIs: Vencidas, Por vencer (7d), Total por cobrar, Promedio días desde facturación
+  - [x] Tarjetas por factura con cliente, monto, fecha factura, días transcurridos, barra de progreso
+  - [x] Filtros: Todas, Vencidas, Por vencer + búsqueda + ordenamiento
+  - [x] Selector de plazo de cobro (15/30/45/60/90 días)
+  - [x] Resumen agrupado por cliente con totales por divisa (ARS/USD)
+  - [x] Integrar en sidebar y rutas del sistema
+- [x] Mejora: Módulo de OC Pendientes de Ejecución
+  - [x] Crear página OCTracker con listado de trabajos con OC que no se iniciaron/completaron
+  - [x] KPIs: Sin iniciar, En progreso, Total OC, Demoradas (configurable 7-60 días)
+  - [x] Tarjetas agrupadas por cliente con monto, N° OC, fecha OC, días transcurridos, barra de progreso
+  - [x] Filtros (Todas/Sin iniciar/En progreso/Demoradas), búsqueda y ordenamiento
+  - [x] Botones de acción rápida: Iniciar trabajo / Completar trabajo
+  - [x] Integrar en sidebar (entre Trabajos y Cobranzas) y rutas del sistema
+- [x] Mejora: Subir PDF de OC y Factura en Trabajos
+  - [x] Agregar campos purchaseOrderFileUrl e invoiceFileUrl en meta JSON del trabajo
+  - [x] Crear endpoint tRPC de upload de archivos a S3 (files.upload)
+  - [x] Crear componente reutilizable FileUpload con drag&drop, preview y eliminar
+  - [x] Agregar botón de upload PDF en formulario de trabajos (sección OC y Factura)
+  - [x] Mostrar link "Ver PDF OC" en OCTracker y "Ver PDF" en InvoiceTracker
+- [x] Mejora: Respaldo automático semanal a Google Drive
+  - [x] Crear script ingem-backup.sh que exporta datos vía API tRPC
+  - [x] Subir archivo JSON a Google Drive (INGEM-Sistema/Respaldos/)
+  - [x] Configurar tarea programada: domingos 3:00 AM Argentina
+  - [x] Probar respaldo manual: 42 registros, 28KB, subido exitosamente
+  - [x] Limpieza automática: mantiene últimos 12 respaldos (~3 meses)
+- [x] Mejora: Botón "Registrar cobro" en Cobranzas
+  - [x] Crear procedimiento tRPC jobs.registerPayment (actualiza amountPaid/status + crea transacción ingreso)
+  - [x] Diálogo completo: resumen del trabajo, monto (con símbolo divisa), fecha, medio de pago (5 opciones), notas
+  - [x] Soporte cobro parcial (muestra saldo restante) y cobro total (marca como Cobrado)
+  - [x] Botón "Registrar Cobro" integrado en cada tarjeta de InvoiceTracker
+  - [x] Cobro se registra automáticamente como ingreso en Finanzas con referencia al trabajo
+- [x] Mejora: Módulo de Seguimiento de Presupuestos
+  - [x] Crear página BudgetTracker con listado de presupuestos pendientes/rechazados
+  - [x] KPIs: Pendientes, Sin respuesta (+7d), Total presupuestado, Tasa de aprobación
+  - [x] Tarjetas agrupadas por cliente con monto, fecha, días sin respuesta
+  - [x] Acciones rápidas: Aprobar, Rechazar, Marcar como seguimiento realizado
+  - [x] Filtros, búsqueda y ordenamiento
+  - [x] Integrar en sidebar y rutas del sistema
+- [x] Mejora: Optimizar vista tablet en Presupuestos (BudgetTracker)
+  - [x] Ajustar KPIs, filtros, tarjetas y acciones para resolución tablet (~768-1024px)
+  - [x] Verificar que botones de acción sean accesibles con touch
+  - [x] Asegurar que el layout no se rompa en orientación horizontal y vertical
+- [x] Mejora: Generación de PDF de Presupuestos con membrete INGEM
+  - [x] Generación client-side con jsPDF + jspdf-autotable (sin necesidad de endpoint server-side)
+  - [x] Diseño del PDF: membrete INGEM (logo, CUIT 23-37374776-9, tel 11 5467-3062, dirección Calle 30 N°2003 Guernica)
+  - [x] Contenido: datos cliente (nombre, CUIT, teléfono), detalle de ítems/servicios, montos, IVA, total
+  - [x] Incluir aclaración "Precio sujeto a cotización Dólar Banco Nación venta billete al momento del pago"
+  - [x] Botón "Descargar PDF" en BudgetTracker (acción rápida por presupuesto) y en formulario de trabajo
+  - [x] Condiciones estándar (validez 15 días, forma de pago, plazos)
+- [x] Mejora: Formulario de Nuevo Presupuesto independiente (steel order)
+  - [x] Crear página NewBudget con formulario completo (cliente, ítems, divisa, IVA)
+  - [x] Agregar ítems dinámicos con descripción, cantidad, precio unitario
+  - [x] Selector de cliente existente o carga manual de datos
+  - [x] Al guardar: crear trabajo con budgetStatus='pending' y generar/descargar PDF automáticamente
+  - [x] Botón "Nuevo Presupuesto" en módulo de Presupuestos
+  - [x] El presupuesto queda visible en el listado de Presupuestos para seguimiento
+  - [x] Fix: corregir cálculo de subtotal en PDF (evitar doble conteo de materialsCost con productsUsed)
+- [x] Mejora: Numeración correlativa automática de presupuestos
+  - [x] Crear endpoint backend getNextBudgetNumber() que consulta el último número PR-XXXX en la DB
+  - [x] Formato PR-XXXX (ej: PR-0001, PR-0002, PR-0003...)
+  - [x] Actualizar NewBudget para obtener el siguiente número del backend (trpc.jobs.nextBudgetNumber)
+  - [x] Actualizar JobForm para usar número correlativo al crear presupuesto (refetch on demand)
+  - [x] Verificar que no se repitan números (consulta MAX + count en DB)
+- [x] Seguridad: Proteger APIs con autenticación JWT
+  - [x] Crear módulo ingemAuth.ts con generación/verificación de JWT tokens (jose)
+  - [x] Crear ingemProtectedProcedure y ingemAdminProcedure en trpc.ts
+  - [x] Cambiar todos los endpoints de datos a ingemProtectedProcedure (52 endpoints protegidos)
+  - [x] Endpoints admin-only: createUser, updateUser, toggleUserStatus
+  - [x] Mantener como públicos solo: ingemAuth.login, ingemAuth.getUsers
+  - [x] Frontend envía JWT token en header Authorization (main.tsx)
+  - [x] Frontend redirige a login en caso de 401 y limpia localStorage
+  - [x] AuthContext guarda token al login y lo limpia al logout
+  - [x] Tests actualizados: 25/25 pasan (ingem.test.ts, ingemAuth.test.ts, notifications.test.ts, auth.logout.test.ts)
+  - [x] Verificado con curl: sin token → 401, con token → datos OK
+- [x] Mejora: Turnos recurrentes en Agenda
+  - [x] Agregar campos de recurrencia en schema (recurrenceType, recurrenceEndDate, parentAppointmentId, recurrenceGroupId)
+  - [x] Opciones: sin repetición, semanal, quincenal, mensual, cada 3 meses
+  - [x] Al crear turno recurrente, generar automáticamente los turnos futuros (generateRecurringDates)
+  - [x] UI en AppointmentForm para seleccionar tipo de recurrencia y fecha fin
+  - [x] Endpoint deleteRecurrenceGroup para eliminar grupo completo
+- [x] Mejora: Notas post-visita al completar turno
+  - [x] Agregar campos completionNotes y completedBy en schema de appointments
+  - [x] Dialog/formulario al marcar turno como "Completado" para registrar qué se hizo
+  - [x] Endpoint appointments.complete que actualiza status + notas
+  - [x] UI en Calendar.tsx con diálogo de notas al completar
+  - [x] Tests: 32/32 pasan (appointments.test.ts con 7 tests nuevos)
+- [x] Agenda: mostrar indicador visual de turnos recurrentes en las vistas del calendario/lista (icono Repeat2 indigo en weekly/monthly/daily/list)
+- [x] Agenda: mostrar las notas post-visita en el detalle del turno completado (bloque verde en diálogo de detalle)
+- [x] Cliente: mostrar historial de servicio / notas post-visita desde la ficha del cliente (CustomerDetail tab Turnos)
+- [x] Mejora móvil: Botón "Más" en bottom nav
+  - [x] Agregar 6to botón "Más" (ícono MoreHorizontal) al bottom nav móvil
+  - [x] Al tocar "Más", mostrar Drawer desde abajo con módulos secundarios (Presupuestos, OC Pendientes, Cobranzas, Notas, Proveedores, Stock, Técnicos, Reportes, Usuarios, Configuración)
+  - [x] El menú se cierra al seleccionar un módulo
+  - [x] Indicador visual de página activa en botón "Más" cuando se navega a un módulo secundario
+- [x] Mejora móvil: Responsive en AppointmentForm
+  - [x] Convertir grids fijos a responsive (grid-cols-1 sm:grid-cols-2 en fecha/hora y duración/estado)
+  - [x] Selects, inputs y botones con h-10 en móvil (touch-friendly 44px), h-9 en sm:
+  - [x] Padding y spacing reducidos en móvil (p-4 vs p-6), textos text-base en móvil para legibilidad
+  - [x] Botones de acción fijos en bottom bar en móvil (fixed bottom-16 para no tapar bottom nav)
+  - [x] Cards con CardHeader/CardContent compactos en móvil
+  - [x] Técnicos con min-h-[56px] para touch targets, productos con min-h-[44px]
+- [x] Mejora móvil: Responsive en JobForm
+  - [x] Convertir grid-cols-3 fijos a grid-cols-1 sm:grid-cols-3 (fechas, presupuesto, costos)
+  - [x] Convertir grid-cols-2 fijos a grid-cols-1 sm:grid-cols-2 (OC, facturación, consumidor final)
+  - [x] Inputs y selects con h-10 touch-friendly en móvil, h-9 en sm:
+  - [x] Botones de acción fijos en bottom bar en móvil (fixed bottom-16)
+  - [x] Cards con padding compacto (p-4 vs p-6) en móvil
+  - [x] Header compacto con botón Volver sin texto en móvil
+  - [x] Productos: selector y cantidad en columna en móvil (flex-col sm:flex-row)
+  - [x] Técnicos: grid-cols-1 sm:grid-cols-2 md:grid-cols-3 con min-h-[48px]
+- [x] Mejora móvil: Responsive en ProductForm
+  - [x] Convertir grid-cols-2 a grid-cols-1 sm:grid-cols-2 (categoría/marca, precios)
+  - [x] Convertir grid-cols-3 a grid-cols-1 sm:grid-cols-3 (stock)
+  - [x] Inputs con h-10 touch-friendly en móvil, h-9 en sm:
+  - [x] Padding y spacing compactos (p-4 vs p-6) en móvil
+  - [x] Botones fijos en bottom bar en móvil (fixed bottom-16)
+  - [x] Header compacto con icono ArrowLeft sin texto en móvil
+- [x] Bug fix: Eliminar clientes no funcionaba
+  - [x] handleDelete en CustomerDetail no esperaba (await) la promesa async
+  - [x] confirmDelete en CustomersList no esperaba (await) la promesa async
+  - [x] Agregado try/catch para manejar errores de eliminación
+  - [x] Eliminados clientes de prueba de la base de datos
+- [x] Calendario: Fix timezone - crear parseLocalDate helper y usarlo en lugar de new Date("YYYY-MM-DD")
+- [x] Calendario: Botón "Confirmar" en detalle del turno cuando status === 'pending'
+- [x] Calendario: Rango horario dinámico en vista semana/día para turnos fuera de 7-20
+- [x] Calendario: Vista lista desde hoy en adelante con botón "Ver anteriores"
+- [x] Calendario: Color del día en vista mensual ignorando cancelados (salvo que sean los únicos)
+- [x] Calendario: Links clickeables - teléfono (tel: + WhatsApp wa.me), dirección (Google Maps)
+- [x] Calendario: Limpieza - borrar timeToNumber y RECURRENCE_OPTIONS no usados, extraer AppointmentCard
+- [x] Seguridad Login: eliminar selección rápida de usuarios, eliminar resetToDefault, validación 100% server-side
+- [x] Productos a Backend: migrar ProductForm/ProductsList/ProductDetail de localStorage a tRPC con migración automática
+- [x] Fechas: crear parseLocalDate en lib/dateUtils y usarlo en Dashboard, Reports, FinanceList, JobsList, NotesList, NoteForm, TransactionForm
+- [x] Monedas: separar ARS/USD en Dashboard (A facturar, Pendiente cobro) y Reports (ingresos por trabajos)
+- [x] Búsqueda: crear helper normalize() para búsqueda sin acentos en CustomersList, JobsList, SuppliersList, TechniciansList, NotesList
+- [x] Menores: locale es-AR en CustomersList, aviso en dialog eliminar cliente sobre datos asociados, sacar ComponentShowcase de rutas
+- [x] Dashboard rediseño: nuevo orden mobile-first (header, accesos rápidos, turnos hoy/mañana, alertas, pipeline, finanzas, notas)
+- [x] Dashboard: eliminar grilla "Módulos del Sistema" y tarjetas Stock/Técnicos/Clientes (mover alertas a fila de alertas)
+- [x] Dashboard: turnos HOY y MAÑANA con hora, título, cliente, dirección, técnico, botones tel/WhatsApp/Maps, deep link a detalle
+- [x] Dashboard: tarjeta "Vencidos" en rojo con monto ARS/USD separado, "Por Cobrar" solo lo no vencido
+- [x] Dashboard: finanzas del mes con comparación mes anterior (flecha + % variación), renombrar Rentabilidad a "Margen de caja"
+- [x] Dashboard: deep links en alertas y pipeline a vistas filtradas
+- [x] Dashboard: sacar hardcodeo isLudmila/maxi/ludmila, filtrar notas por currentUser.id
+- [x] Dashboard: stock alerta con purchasePrice (capital inmovilizado real)
+- [x] Rentabilidad: agregar campo relatedJobId en transacciones (schema + migración)
+- [x] Rentabilidad: selector "Trabajo relacionado" en TransactionForm con búsqueda
+- [x] Rentabilidad: verificar/crear transacción de ingreso automática al registrar pago en InvoiceTracker
+- [x] Rentabilidad: evitar doble conteo (ingresos con relatedJobId no suman en ganancia general)
+- [x] Rentabilidad: helper de cálculo de margen por trabajo (subtotal sin IVA - costos productos - gastos imputados)
+- [x] Rentabilidad: UI JobForm - sección "Gastos imputados" readonly + botón "+ Gasto"
+- [x] Rentabilidad: UI JobsList - chip de margen en cada tarjeta
+- [x] Rentabilidad: UI Dashboard - línea "Ganancia por trabajos" con margen % del mes
+- [x] Rentabilidad: UI Reports - sección Rentabilidad (margen por mes, ranking cliente, top 5 mejor/peor)
+- [x] Rentabilidad: ganancia neta mensual en Reports (márgenes + ingresos sin job - gastos sin job)
+- [x] Rentabilidad: permisos admin-only para margen, ganancia y sección Rentabilidad
+- [x] Rentabilidad Real: campo relatedJobId en transacciones (useTransactions hook)
+- [x] Rentabilidad Real: selector "Trabajo relacionado (opcional)" en TransactionForm con búsqueda y filtro por estado
+- [x] Rentabilidad Real: helper marginUtils.ts (calculateJobMargin, calculateNetMonthlyProfit, formatMarginChip, getMarginColor)
+- [x] Rentabilidad Real: sección "Gastos imputados" en JobForm (modo edición) con lista y botón "+ Gasto"
+- [x] Rentabilidad Real: chip de margen en cada tarjeta de JobsList (solo admin)
+- [x] Rentabilidad Real: línea "Ganancia por trabajos" en Dashboard Finanzas del Mes (solo admin)
+- [x] Rentabilidad Real: sección Rentabilidad en Reports (margen por mes, ranking por cliente, top 5 mejor/peor margen, ganancia neta mensual) - solo admin
+- [x] Rentabilidad Real: verificar que registerPayment ya crea transacción con relatedJobId (confirmado)
+- [x] Rentabilidad Real: ingresos con relatedJobId NO se suman en ganancia neta (evita doble conteo)
+- [x] Rentabilidad Real: permisos - margen, ganancia y Rentabilidad visibles SOLO para admin
+- [x] Verificación: registerPayment ya crea transacción income con relatedJobId, monto y fecha (confirmado en server/routers.ts línea 548-568)
+- [x] Verificación: App.tsx pasa products y transactions a JobsList, y transactions a JobForm (confirmado líneas 465-505)
+- [x] Verificación: rutas /cobranzas, /presupuestos, /oc-pendientes existen en App.tsx (confirmado líneas 515, 545, 560)
+- [x] Mejora: Usar normalize() de lib/textUtils en selector "Trabajo relacionado" de TransactionForm para ignorar acentos
+- [x] Presupuestos: fix bug notes hardcodeado en NewBudget jobForPdf
+- [x] Presupuestos: campos nuevos (lugar de obra, descuento global, forma de pago, plazo de entrega, garantía)
+- [x] Presupuestos: plantilla en Configuración con textos default (forma pago, garantía, condiciones)
+- [x] Presupuestos: botón "Compartir PDF" con Web Share API + fallback descarga + marcar como Enviado (budgetSentDate)
+- [x] Presupuestos: tracker cuenta días desde budgetSentDate, estado Vencido cuando hoy > dueDate, filtro
+- [x] Presupuestos: edición de presupuesto pendiente en NewBudget (modo edición, mantiene número)
+- [x] Presupuestos: PDF incluye descuento, condiciones al pie, nuevos campos
+- [x] Compartir agenda: centralizar cleanPhone, whatsappUrl, mapsUrl en lib/contactUtils.ts
+- [x] Compartir agenda: crear generador de mensaje en lib/agendaMessage.ts
+- [x] Compartir agenda: botón "Compartir día" en Calendar vista Día con dialog
+- [x] Compartir agenda: botón "Enviar a técnico" en dialog detalle turno
+- [x] Compartir agenda: botón compartir en encabezado Agenda del Dashboard
+- [x] Mejoras generales: corregir textos rotos UTF-8 en todos los archivos
+- [x] Mejoras generales: crear formUtils.ts con helpers de validación
+- [x] Mejoras generales: completar dateUtils.ts con parseLocalDate, todayStr, addDaysLocal, etc.
+- [x] Mejoras generales: guardado async con isSaving en AppointmentForm
+- [x] Mejoras generales: guardado async con isSaving en TransactionForm + reemplazar usuario hardcodeado
+- [x] Mejoras generales: guardado async con isSaving en CustomerForm, SupplierForm, TechnicianForm
+- [x] Mejoras generales: reforzar permisos viewer en todas las páginas
+- [x] Mejoras generales: refactorizar NewBudget con budgetUtils helpers
+- [x] Mejoras generales: mejorar TechnicianForm con validación de archivos
+- [x] Mejoras generales: agregar aria-label a botones icon-only

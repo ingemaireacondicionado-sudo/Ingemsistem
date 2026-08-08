@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1771351281707,
+      "tag": "0000_groovy_ghost_rider",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1771351428460,
+      "tag": "0001_tricky_jackal",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1771552828529,
+      "tag": "0002_safe_shatterstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1772070729148,
+      "tag": "0003_hot_ender_wiggin",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1780276431811,
+      "tag": "0004_aromatic_sharon_ventura",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1783268109266,
+      "tag": "0005_lean_red_ghost",
+      "breakpoints": true
+    }
+  ]
+}
