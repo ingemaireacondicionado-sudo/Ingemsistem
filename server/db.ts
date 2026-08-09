@@ -1,9 +1,9 @@
-import { eq, desc, sql, like, and } from "drizzle-orm";
+import { eq, desc, sql, like, and, inArray, lt, or, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
   customers, suppliers, products, technicians,
-  appointments, notes, transactions, jobs, ingemUsers
+  appointments, notes, transactions, jobs, ingemUsers, loginRateLimits
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { hashPassword } from './passwordUtils';
@@ -132,6 +132,86 @@ export async function deleteIngemUser(id: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db.delete(ingemUsers).where(eq(ingemUsers.id, id));
+}
+
+// ========== Login rate limiting (compartido vía TiDB) ==========
+
+// ¿Alguna de las claves está bloqueada ahora mismo? (lectura simple)
+export async function isLoginBlocked(rateKeys: string[]): Promise<boolean> {
+  const db = await getDb();
+  if (!db || rateKeys.length === 0) return false;
+  const now = Date.now();
+  const rows = await db
+    .select({ blockedUntil: loginRateLimits.blockedUntil })
+    .from(loginRateLimits)
+    .where(inArray(loginRateLimits.rateKey, rateKeys));
+  return rows.some(r => r.blockedUntil != null && r.blockedUntil.getTime() > now);
+}
+
+// Registra un intento fallido para una clave, de forma atómica (transacción con
+// SELECT ... FOR UPDATE), segura ante requests simultáneos entre instancias.
+export async function recordLoginFailure(
+  rateKey: string,
+  windowMs: number,
+  maxAttempts: number,
+  blockMs: number,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return; // sin DB no se registra; el login no debe romperse por esto
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    // 1) Garantizar que la fila existe (no-op si ya está) para poder bloquearla.
+    await tx
+      .insert(loginRateLimits)
+      .values({ rateKey, attempts: 0, windowStart: now, updatedAt: now })
+      .onDuplicateKeyUpdate({ set: { updatedAt: now } });
+    // 2) Bloquear la fila y leer su estado actual.
+    const rows = await tx
+      .select()
+      .from(loginRateLimits)
+      .where(eq(loginRateLimits.rateKey, rateKey))
+      .for("update");
+    const row = rows[0];
+    const expired = row.windowStart.getTime() < now.getTime() - windowMs;
+    const attempts = expired ? 1 : row.attempts + 1;
+    const windowStart = expired ? now : row.windowStart;
+    const blockedUntil =
+      attempts >= maxAttempts
+        ? new Date(now.getTime() + blockMs)
+        : expired
+          ? null
+          : row.blockedUntil;
+    // 3) Escribir el nuevo estado dentro de la misma transacción.
+    await tx
+      .update(loginRateLimits)
+      .set({ attempts, windowStart, blockedUntil, updatedAt: now })
+      .where(eq(loginRateLimits.rateKey, rateKey));
+  });
+}
+
+// Limpia el contador de una clave (p. ej. IP+email tras un login exitoso).
+export async function clearLoginRateKey(rateKey: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(loginRateLimits).where(eq(loginRateLimits.rateKey, rateKey));
+}
+
+// Limpieza oportunista de registros vencidos (ventana pasada y sin bloqueo
+// vigente). Acotada por LIMIT para no hacer trabajo pesado en un request.
+export async function cleanupExpiredLoginRateLimits(olderThanMs: number, limit = 100): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  const cutoff = new Date(Date.now() - olderThanMs);
+  const now = new Date();
+  await db
+    .delete(loginRateLimits)
+    .where(
+      and(
+        lt(loginRateLimits.windowStart, cutoff),
+        or(isNull(loginRateLimits.blockedUntil), lt(loginRateLimits.blockedUntil, now)),
+      ),
+    )
+    .limit(limit);
 }
 
 // ========== Customers ==========

@@ -6,11 +6,13 @@ import {
   ingemCreateProcedure, ingemEditProcedure, ingemDeleteProcedure, ingemRegisterPaymentProcedure,
 } from "./_core/trpc";
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import * as notify from "./notifications";
 import { storagePut } from "./storage";
 import { generateIngemToken } from "./ingemAuth";
 import { hashPassword, verifyPassword } from "./passwordUtils";
+import { isLoginRateLimited, registerFailedLogin, registerSuccessfulLogin, RATE_LIMIT_MESSAGE } from "./rateLimit";
 
 // Helper to generate recurring appointment dates
 function generateRecurringDates(startDate: string, endDate: string, type: string): string[] {
@@ -57,51 +59,68 @@ export const appRouter = router({
   ingemAuth: router({
     login: publicProcedure
       .input(z.object({ email: z.string(), password: z.string() }))
-      .mutation(async ({ input }) => {
-        const user = await db.getIngemUserByEmail(input.email);
-        if (!user || !user.isActive) {
-          return { success: false as const, error: "Credenciales inválidas" };
+      .mutation(async ({ input, ctx }) => {
+        const ip = ctx.req.ip || "unknown";
+
+        // Rate limiting compartido (TiDB): si la IP o IP+email está bloqueada,
+        // se corta ANTES de verificar credenciales (mensaje genérico, 429).
+        if (await isLoginRateLimited(ip, input.email)) {
+          throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: RATE_LIMIT_MESSAGE });
         }
+
+        const user = await db.getIngemUserByEmail(input.email);
 
         // Verificación de contraseña con hash como fuente de verdad.
         let passwordOk = false;
-        if (user.passwordHash) {
-          // Ya migrado: se valida SOLO contra el hash (no se mira el texto plano).
-          passwordOk = await verifyPassword(input.password, user.passwordHash);
-        } else if (user.password != null && user.password === input.password) {
-          // Transición: usuario sin hash todavía. Se acepta la contraseña en
-          // claro por única vez y se genera el hash automáticamente (migración
-          // perezosa), sin modificar la contraseña que usa el usuario.
-          passwordOk = true;
-          try {
-            const newHash = await hashPassword(input.password);
-            await db.setIngemUserPasswordHash(user.id, newHash);
-          } catch {
-            // Si falla el guardado del hash, el login igualmente procede;
-            // se reintentará en el próximo ingreso.
+        if (user && user.isActive) {
+          if (user.passwordHash) {
+            // Ya migrado: se valida SOLO contra el hash (no se mira el texto plano).
+            passwordOk = await verifyPassword(input.password, user.passwordHash);
+          } else if (user.password != null && user.password === input.password) {
+            // Transición: usuario sin hash todavía. Se acepta la contraseña en
+            // claro por única vez y se genera el hash automáticamente (migración
+            // perezosa), sin modificar la contraseña que usa el usuario.
+            passwordOk = true;
+            try {
+              const newHash = await hashPassword(input.password);
+              await db.setIngemUserPasswordHash(user.id, newHash);
+            } catch {
+              // Si falla el guardado del hash, el login igualmente procede;
+              // se reintentará en el próximo ingreso.
+            }
           }
         }
 
         if (!passwordOk) {
+          // Intento fallido: incrementa contadores (IP y IP+email). Nunca se
+          // registra la contraseña. Mensaje genérico (no revela si el email existe).
+          await registerFailedLogin(ip, input.email);
           return { success: false as const, error: "Credenciales inválidas" };
         }
+
+        // passwordOk === true garantiza que el usuario existe y está activo.
+        const authUser = user!;
+
+        // Login exitoso: limpia el contador IP+email (no consume cuota).
+        await registerSuccessfulLogin(ip, input.email);
+
         // Generate JWT token for authenticated session
         const token = await generateIngemToken({
-          userId: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
+          userId: authUser.id,
+          email: authUser.email,
+          name: authUser.name,
+          role: authUser.role,
         });
         return {
           success: true as const,
           token,
           user: {
-            id: user.id.toString(),
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            isActive: user.isActive,
-            allowedModules: user.allowedModules ? JSON.parse(user.allowedModules) : undefined,
+            id: authUser.id.toString(),
+            name: authUser.name,
+            email: authUser.email,
+            role: authUser.role,
+            isActive: authUser.isActive,
+            allowedModules: authUser.allowedModules ? JSON.parse(authUser.allowedModules) : undefined,
           },
         };
       }),

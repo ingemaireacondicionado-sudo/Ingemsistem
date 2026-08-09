@@ -38,6 +38,21 @@ export const ingemUsers = mysqlTable("ingem_users", {
 });
 
 /**
+ * Rate limiting de login, compartido entre instancias vía TiDB.
+ * NO almacena contraseñas, JWT ni secretos. La clave (rateKey) es un HMAC-SHA256
+ * de "ip:<ip>" o "ipemail:<ip>|<email normalizado>", de modo que ni la IP ni el
+ * email quedan en claro.
+ */
+export const loginRateLimits = mysqlTable("login_rate_limits", {
+  rateKey: varchar("rateKey", { length: 64 }).primaryKey(), // HMAC-SHA256 hex
+  attempts: int("attempts").default(0).notNull(),
+  windowStart: timestamp("windowStart").defaultNow().notNull(),
+  blockedUntil: timestamp("blockedUntil"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/**
  * Customers
  */
 export const customers = mysqlTable("customers", {

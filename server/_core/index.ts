@@ -31,6 +31,9 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  // Detrás del reverse proxy de Manus: confiar en 1 salto para que req.ip use
+  // el X-Forwarded-For del proxy (no headers arbitrarios del cliente).
+  app.set("trust proxy", 1);
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));

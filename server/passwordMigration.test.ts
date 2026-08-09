@@ -61,6 +61,20 @@ process.env.DATABASE_URL = "mysql://test";
 // El dataset del mock reconoce la tabla ingem_users por identidad de referencia.
 store.ingemTable = ingemUsers;
 
+// El login ahora usa rate limiting (transacciones en TiDB) que el mock de
+// drizzle de este archivo no soporta. Se neutralizan esas funciones (el resto
+// de db queda real). El rate limiting se testea en loginRateLimit.test.ts.
+vi.mock("./db", async (orig) => {
+  const actual = await orig<typeof import("./db")>();
+  return {
+    ...actual,
+    isLoginBlocked: async () => false,
+    recordLoginFailure: async () => {},
+    clearLoginRateKey: async () => {},
+    cleanupExpiredLoginRateLimits: async () => {},
+  };
+});
+
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { generateIngemToken } from "./ingemAuth";

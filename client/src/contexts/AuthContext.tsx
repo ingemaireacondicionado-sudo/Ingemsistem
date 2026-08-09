@@ -108,6 +108,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       return { success: false, error: ('error' in result ? result.error : undefined) || 'Credenciales inválidas' };
     } catch (e: any) {
+      // Rate limiting del servidor (429): mostrar el mensaje genérico recibido.
+      if (e?.data?.code === 'TOO_MANY_REQUESTS') {
+        return { success: false, error: e?.message || 'Demasiados intentos. Probá nuevamente en unos minutos.' };
+      }
       return { success: false, error: 'Error de conexión' };
     }
   };
