@@ -56,6 +56,19 @@ vi.mock("drizzle-orm/mysql2", () => {
 // Necesario para que getDb() entre en la rama que crea la conexión (mockeada).
 process.env.DATABASE_URL = "mysql://test";
 
+// El backend revalida contra ingem_users: mockeamos getIngemUserById para que
+// los tokens resuelvan a usuarios activos con su rol. exportAllData sigue real
+// (usa el mock de drizzle de arriba).
+vi.mock("./db", async (orig) => {
+  const actual = await orig<typeof import("./db")>();
+  const byId = new Map<number, any>([
+    [1, { id: 1, name: "Maxi", email: "maxi@ingem.com", role: "admin", isActive: true, allowedModules: null }],
+    [2, { id: 2, name: "Viewer", email: "viewer@ingem.com", role: "viewer", isActive: true, allowedModules: null }],
+    [3, { id: 3, name: "Tec", email: "tec@ingem.com", role: "technician", isActive: true, allowedModules: null }],
+  ]);
+  return { ...actual, getIngemUserById: async (id: number) => byId.get(id) };
+});
+
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { generateIngemToken } from "./ingemAuth";

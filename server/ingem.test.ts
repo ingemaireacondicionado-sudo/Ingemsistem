@@ -1,4 +1,16 @@
-import { describe, expect, it, beforeAll } from "vitest";
+import { describe, expect, it, beforeAll, vi } from "vitest";
+
+// El backend revalida contra ingem_users: el token admin (id 1) debe resolver
+// a un usuario admin activo. El resto de db queda real (sin DB → [] o error).
+vi.mock("./db", async (orig) => {
+  const actual = await orig<typeof import("./db")>();
+  return {
+    ...actual,
+    getIngemUserById: async (id: number) =>
+      id === 1 ? { id: 1, name: "Maxi", email: "maxi@ingem.com", role: "admin", isActive: true, allowedModules: null } : undefined,
+  };
+});
+
 import { appRouter } from "./routers";
 import { generateIngemToken } from "./ingemAuth";
 import type { TrpcContext } from "./_core/context";

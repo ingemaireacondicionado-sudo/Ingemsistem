@@ -15,7 +15,7 @@ export function assertJwtSecret(secret: string | undefined | null): asserts secr
 
 assertJwtSecret(ENV.cookieSecret);
 const SECRET_KEY = new TextEncoder().encode(ENV.cookieSecret);
-const TOKEN_EXPIRY = "7d"; // 7 days
+export const TOKEN_EXPIRY = "24h"; // 24 horas
 
 export interface IngemTokenPayload {
   userId: number;

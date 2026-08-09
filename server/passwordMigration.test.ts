@@ -141,6 +141,8 @@ describe("login con hash", () => {
 
 describe("creación y cambio de contraseña", () => {
   it("nuevo usuario guarda hash (no texto plano) y la respuesta no devuelve la contraseña", async () => {
+    // El backend revalida contra la base: el admin del token debe existir y estar activo.
+    await seedUser({ email: "admin@ingem.com", role: "admin" }); // id 1, coincide con adminToken
     const caller = appRouter.createCaller(ctxWith(`Bearer ${adminToken}`));
     const res = await caller.ingemAuth.createUser({
       name: "Nuevo", email: "nuevo@ingem.com", password: "mi-clave",
@@ -158,8 +160,8 @@ describe("creación y cambio de contraseña", () => {
 
   it("cambio de contraseña propio actualiza el hash", async () => {
     const hash = await hashPassword("vieja");
-    await seedUser({ email: "cambia@ingem.com", passwordHash: hash, role: "manager" });
-    const userToken = await generateIngemToken({ userId: 99, email: "cambia@ingem.com", name: "C", role: "manager" });
+    const u = await seedUser({ email: "cambia@ingem.com", passwordHash: hash, role: "manager" });
+    const userToken = await generateIngemToken({ userId: u.id, email: "cambia@ingem.com", name: "C", role: "manager" });
     const caller = appRouter.createCaller(ctxWith(`Bearer ${userToken}`));
     const res = await caller.ingemAuth.updateOwnPassword({ currentPassword: "vieja", newPassword: "nueva-clave" });
     expect(res.success).toBe(true);
@@ -170,8 +172,8 @@ describe("creación y cambio de contraseña", () => {
 
   it("cambio de contraseña con contraseña actual incorrecta es rechazado", async () => {
     const hash = await hashPassword("vieja");
-    await seedUser({ email: "cambia2@ingem.com", passwordHash: hash, role: "manager" });
-    const userToken = await generateIngemToken({ userId: 98, email: "cambia2@ingem.com", name: "C", role: "manager" });
+    const u = await seedUser({ email: "cambia2@ingem.com", passwordHash: hash, role: "manager" });
+    const userToken = await generateIngemToken({ userId: u.id, email: "cambia2@ingem.com", name: "C", role: "manager" });
     const caller = appRouter.createCaller(ctxWith(`Bearer ${userToken}`));
     const res = await caller.ingemAuth.updateOwnPassword({ currentPassword: "mal", newPassword: "x" });
     expect(res.success).toBe(false);

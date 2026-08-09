@@ -4,6 +4,7 @@ import superjson from "superjson";
 import type { TrpcContext } from "./context";
 import { extractTokenFromHeader, verifyIngemToken, type IngemTokenPayload } from "../ingemAuth";
 import { canCreate, canEdit, canDelete } from "@shared/permissions";
+import { getIngemUserById } from "../db";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -50,27 +51,61 @@ export const adminProcedure = t.procedure.use(
 // ========== INGEM Internal Auth protected procedure ==========
 const INGEM_UNAUTHED_MSG = "Sesión expirada. Por favor, inicie sesión nuevamente.";
 
-const requireIngemUser = t.middleware(async opts => {
-  const { ctx, next } = opts;
+// Usuario resuelto contra la base en cada request. El role/isActive/identidad
+// provienen SIEMPRE de ingem_users, no del JWT.
+export interface ResolvedIngemUser {
+  userId: number;
+  email: string;
+  name: string;
+  role: string;
+  isActive: boolean;
+  allowedModules: string | null;
+}
 
-  const authHeader = ctx.req.headers.authorization;
-  const token = extractTokenFromHeader(authHeader);
-
+/**
+ * Fuente única de verdad de autenticación por request:
+ *  1) verifica firma y expiración del JWT;
+ *  2) toma el userId del token y consulta ingem_users por PK;
+ *  3) si el usuario no existe o está inactivo -> UNAUTHORIZED;
+ *  4) devuelve el usuario con su role ACTUAL de la base (el role del JWT se
+ *     ignora para autorizar).
+ * Es fail-closed: ante cualquier error al resolver, se deniega el acceso.
+ */
+async function resolveIngemUser(req: { headers: { authorization?: string } }): Promise<ResolvedIngemUser> {
+  const token = extractTokenFromHeader(req.headers.authorization);
   if (!token) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: INGEM_UNAUTHED_MSG });
   }
-
-  const ingemUser = await verifyIngemToken(token);
-  if (!ingemUser) {
+  const payload = await verifyIngemToken(token);
+  if (!payload) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: INGEM_UNAUTHED_MSG });
   }
 
-  return next({
-    ctx: {
-      ...ctx,
-      ingemUser,
-    },
-  });
+  let dbUser: Awaited<ReturnType<typeof getIngemUserById>>;
+  try {
+    dbUser = await getIngemUserById(payload.userId);
+  } catch {
+    // Fail-closed: si no se puede resolver al usuario (p. ej. DB caída), denegar.
+    throw new TRPCError({ code: "UNAUTHORIZED", message: INGEM_UNAUTHED_MSG });
+  }
+  if (!dbUser || dbUser.isActive === false) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: INGEM_UNAUTHED_MSG });
+  }
+
+  return {
+    userId: dbUser.id,
+    email: dbUser.email,
+    name: dbUser.name,
+    role: dbUser.role,
+    isActive: dbUser.isActive,
+    allowedModules: dbUser.allowedModules ?? null,
+  };
+}
+
+const requireIngemUser = t.middleware(async opts => {
+  const { ctx, next } = opts;
+  const ingemUser = await resolveIngemUser(ctx.req);
+  return next({ ctx: { ...ctx, ingemUser } });
 });
 
 export const ingemProtectedProcedure = t.procedure.use(requireIngemUser);
@@ -87,14 +122,7 @@ type PermCheck = (role: string, entity: string) => boolean;
 function requireIngemPermission(check: PermCheck, entity: string) {
   return t.middleware(async opts => {
     const { ctx, next } = opts;
-    const token = extractTokenFromHeader(ctx.req.headers.authorization);
-    if (!token) {
-      throw new TRPCError({ code: "UNAUTHORIZED", message: INGEM_UNAUTHED_MSG });
-    }
-    const ingemUser = await verifyIngemToken(token);
-    if (!ingemUser) {
-      throw new TRPCError({ code: "UNAUTHORIZED", message: INGEM_UNAUTHED_MSG });
-    }
+    const ingemUser = await resolveIngemUser(ctx.req);
     if (!check(ingemUser.role, entity)) {
       throw new TRPCError({ code: "FORBIDDEN", message: FORBIDDEN_MSG });
     }
@@ -115,14 +143,7 @@ export const ingemDeleteProcedure = (entity: string) =>
 export const ingemRegisterPaymentProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
-    const token = extractTokenFromHeader(ctx.req.headers.authorization);
-    if (!token) {
-      throw new TRPCError({ code: "UNAUTHORIZED", message: INGEM_UNAUTHED_MSG });
-    }
-    const ingemUser = await verifyIngemToken(token);
-    if (!ingemUser) {
-      throw new TRPCError({ code: "UNAUTHORIZED", message: INGEM_UNAUTHED_MSG });
-    }
+    const ingemUser = await resolveIngemUser(ctx.req);
     if (!(canEdit(ingemUser.role, "jobs") && canCreate(ingemUser.role, "transactions"))) {
       throw new TRPCError({ code: "FORBIDDEN", message: FORBIDDEN_MSG });
     }
@@ -133,29 +154,11 @@ export const ingemRegisterPaymentProcedure = t.procedure.use(
 // INGEM admin-only procedure
 const requireIngemAdmin = t.middleware(async opts => {
   const { ctx, next } = opts;
-
-  const authHeader = ctx.req.headers.authorization;
-  const token = extractTokenFromHeader(authHeader);
-
-  if (!token) {
-    throw new TRPCError({ code: "UNAUTHORIZED", message: INGEM_UNAUTHED_MSG });
-  }
-
-  const ingemUser = await verifyIngemToken(token);
-  if (!ingemUser) {
-    throw new TRPCError({ code: "UNAUTHORIZED", message: INGEM_UNAUTHED_MSG });
-  }
-
+  const ingemUser = await resolveIngemUser(ctx.req);
   if (ingemUser.role !== 'admin') {
     throw new TRPCError({ code: "FORBIDDEN", message: "No tienes permisos de administrador." });
   }
-
-  return next({
-    ctx: {
-      ...ctx,
-      ingemUser,
-    },
-  });
+  return next({ ctx: { ...ctx, ingemUser } });
 });
 
 export const ingemAdminProcedure = t.procedure.use(requireIngemAdmin);

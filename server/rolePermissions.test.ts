@@ -1,4 +1,14 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
+
+// El backend revalida al usuario contra ingem_users en cada request. Mockeamos
+// SOLO getIngemUserById para que cada token resuelva a un usuario activo cuyo
+// role en la base coincide con el rol de prueba (token role == db role).
+const roleStore = vi.hoisted(() => ({ byId: new Map<number, any>() }));
+vi.mock("./db", async (orig) => {
+  const actual = await orig<typeof import("./db")>();
+  return { ...actual, getIngemUserById: async (id: number) => roleStore.byId.get(id) };
+});
+
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { generateIngemToken } from "./ingemAuth";
@@ -32,6 +42,11 @@ beforeAll(async () => {
     technician: await generateIngemToken({ userId: 3, email: "tec@ingem.com", name: "Tec", role: "technician" }),
     viewer: await generateIngemToken({ userId: 4, email: "viewer@ingem.com", name: "Viewer", role: "viewer" }),
   };
+  // Usuarios activos en la "base": id -> rol actual.
+  roleStore.byId.set(1, { id: 1, name: "Admin", email: "admin@ingem.com", role: "admin", isActive: true, allowedModules: null });
+  roleStore.byId.set(2, { id: 2, name: "Manager", email: "manager@ingem.com", role: "manager", isActive: true, allowedModules: null });
+  roleStore.byId.set(3, { id: 3, name: "Tec", email: "tec@ingem.com", role: "technician", isActive: true, allowedModules: null });
+  roleStore.byId.set(4, { id: 4, name: "Viewer", email: "viewer@ingem.com", role: "viewer", isActive: true, allowedModules: null });
 });
 
 function caller(role?: keyof typeof tokens) {

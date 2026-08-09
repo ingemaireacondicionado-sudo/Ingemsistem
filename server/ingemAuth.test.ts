@@ -1,5 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SignJWT } from "jose";
+
+// El backend revalida contra ingem_users; el test admin-only usa un token de
+// viewer (id 2) que debe resolver a un viewer activo en la "base".
+vi.mock("./db", async (orig) => {
+  const actual = await orig<typeof import("./db")>();
+  const byId = new Map<number, any>([
+    [1, { id: 1, name: "Admin", email: "admin@ingem.com", role: "admin", isActive: true, allowedModules: null }],
+    [2, { id: 2, name: "Viewer", email: "viewer@ingem.com", role: "viewer", isActive: true, allowedModules: null }],
+  ]);
+  return { ...actual, getIngemUserById: async (id: number) => byId.get(id) };
+});
+
 import { generateIngemToken, verifyIngemToken, extractTokenFromHeader, assertJwtSecret } from "./ingemAuth";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";

@@ -70,6 +70,26 @@ export async function getIngemUserByEmail(email: string) {
   return result[0];
 }
 
+// Busca un usuario por primary key. Devuelve SOLO los campos necesarios para
+// autenticación/autorización (nunca password ni passwordHash). Solo lectura.
+export async function getIngemUserById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select({
+      id: ingemUsers.id,
+      name: ingemUsers.name,
+      email: ingemUsers.email,
+      role: ingemUsers.role,
+      isActive: ingemUsers.isActive,
+      allowedModules: ingemUsers.allowedModules,
+    })
+    .from(ingemUsers)
+    .where(eq(ingemUsers.id, id))
+    .limit(1);
+  return result[0];
+}
+
 export async function createIngemUser(data: { name: string; email: string; passwordHash: string; role: "admin" | "manager" | "technician" | "viewer"; isActive: boolean; allowedModules?: string[] }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
