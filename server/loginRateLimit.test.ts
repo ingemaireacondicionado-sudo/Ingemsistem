@@ -7,6 +7,8 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vite
 const rateStore = vi.hoisted(() => ({
   map: new Map<string, { attempts: number; windowStart: number; blockedUntil: number | null }>(),
   chain: Promise.resolve(),
+  // Flags para forzar errores de DB y verificar el comportamiento fail-open.
+  fail: { block: false, record: false, clear: false },
 }));
 // Usuarios "en la base" para el login (con passwordHash).
 const userStore = vi.hoisted(() => ({ byEmail: new Map<string, any>() }));
@@ -18,6 +20,7 @@ vi.mock("./db", async (orig) => {
     getIngemUserByEmail: async (email: string) => userStore.byEmail.get(email.trim().toLowerCase()),
     setIngemUserPasswordHash: async () => {},
     isLoginBlocked: async (keys: string[]) => {
+      if (rateStore.fail.block) throw new Error("DB error (isLoginBlocked)");
       const now = Date.now();
       return keys.some((k) => {
         const r = rateStore.map.get(k);
@@ -25,6 +28,7 @@ vi.mock("./db", async (orig) => {
       });
     },
     recordLoginFailure: async (key: string, windowMs: number, max: number, blockMs: number) => {
+      if (rateStore.fail.record) throw new Error("DB error (recordLoginFailure)");
       rateStore.chain = rateStore.chain.then(() => {
         const now = Date.now();
         const r = rateStore.map.get(key) ?? { attempts: 0, windowStart: now, blockedUntil: null };
@@ -36,7 +40,10 @@ vi.mock("./db", async (orig) => {
       });
       await rateStore.chain;
     },
-    clearLoginRateKey: async (key: string) => { rateStore.map.delete(key); },
+    clearLoginRateKey: async (key: string) => {
+      if (rateStore.fail.clear) throw new Error("DB error (clearLoginRateKey)");
+      rateStore.map.delete(key);
+    },
     cleanupExpiredLoginRateLimits: async () => {},
   };
 });
@@ -63,6 +70,7 @@ beforeAll(async () => { goodHash = await hashPassword("correcta"); });
 beforeEach(() => {
   rateStore.map.clear();
   rateStore.chain = Promise.resolve();
+  rateStore.fail = { block: false, record: false, clear: false };
   userStore.byEmail.clear();
   userStore.byEmail.set("real@ingem.com", {
     id: 1, name: "Real", email: "real@ingem.com", role: "admin",
@@ -181,6 +189,28 @@ describe("Punto 6 — rate limiting de login (TiDB compartido)", () => {
     expect(k1).toMatch(/^[a-f0-9]{64}$/); // HMAC-SHA256 hex
     // Determinístico y sensible a la normalización del email.
     expect(ipEmailRateKey("1.2.3.4", "A@B.com")).toBe(ipEmailRateKey("1.2.3.4", "a@b.com"));
+  });
+
+  it("FAIL-OPEN: si falla la consulta de bloqueo, el login sigue verificando la contraseña", async () => {
+    rateStore.fail.block = true;
+    // Contraseña correcta → entra igual (el error del limitador no bloquea).
+    const ok = await call("5.0.0.1").ingemAuth.login({ email: "real@ingem.com", password: "correcta" });
+    expect(ok.success).toBe(true);
+    // Contraseña incorrecta → rechazo normal (no bypass, no error inesperado).
+    const bad = await call("5.0.0.1").ingemAuth.login({ email: "real@ingem.com", password: "mal" });
+    expect(bad).toEqual({ success: false, error: "Credenciales inválidas" });
+  });
+
+  it("FAIL-OPEN: si falla el registro del fallo, el login responde normalmente", async () => {
+    rateStore.fail.record = true;
+    const bad = await call("5.0.0.2").ingemAuth.login({ email: "real@ingem.com", password: "mal" });
+    expect(bad).toEqual({ success: false, error: "Credenciales inválidas" });
+  });
+
+  it("FAIL-OPEN: si falla la limpieza tras un login correcto, el usuario igual entra", async () => {
+    rateStore.fail.clear = true;
+    const ok = await call("5.0.0.3").ingemAuth.login({ email: "real@ingem.com", password: "correcta" });
+    expect(ok.success).toBe(true);
   });
 
   it("concurrencia: ráfaga de fallos no pierde incrementos y termina bloqueando", async () => {
