@@ -12,6 +12,7 @@ import * as notify from "./notifications";
 import { storagePut } from "./storage";
 import { generateIngemToken } from "./ingemAuth";
 import { hashPassword, verifyPassword } from "./passwordUtils";
+import { validateFileUpload, validateTechnicianDocuments } from "./fileValidation";
 import { isLoginRateLimited, registerFailedLogin, registerSuccessfulLogin, RATE_LIMIT_MESSAGE } from "./rateLimit";
 
 // Helper to generate recurring appointment dates
@@ -301,7 +302,11 @@ export const appRouter = router({
         emergencyContact: z.string().default(""), emergencyPhone: z.string().default(""),
         notes: z.string().default(""), documents: z.string().default("[]"),
       }))
-      .mutation(async ({ input }) => db.createTechnician(input)),
+      .mutation(async ({ input }) => {
+        const check = validateTechnicianDocuments(input.documents);
+        if (!check.ok) throw new TRPCError({ code: "BAD_REQUEST", message: check.error });
+        return db.createTechnician(input);
+      }),
     update: ingemEditProcedure("technicians")
       .input(z.object({
         id: z.number(), firstName: z.string().optional(), lastName: z.string().optional(),
@@ -311,7 +316,13 @@ export const appRouter = router({
         emergencyContact: z.string().optional(), emergencyPhone: z.string().optional(),
         notes: z.string().optional(), documents: z.string().optional(),
       }))
-      .mutation(async ({ input }) => { const { id, ...data } = input; await db.updateTechnician(id, data); return { success: true }; }),
+      .mutation(async ({ input }) => {
+        if (input.documents !== undefined) {
+          const check = validateTechnicianDocuments(input.documents);
+          if (!check.ok) throw new TRPCError({ code: "BAD_REQUEST", message: check.error });
+        }
+        const { id, ...data } = input; await db.updateTechnician(id, data); return { success: true };
+      }),
     delete: ingemDeleteProcedure("technicians").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTechnician(input.id)),
   }),
 
@@ -653,20 +664,31 @@ export const appRouter = router({
 
   // ========== File Upload ==========
   files: router({
+    // LEGACY: sube al storage PÚBLICO de Forge. Se mantiene por compatibilidad,
+    // pero ahora valida el archivo del lado del servidor (tipo real por magic
+    // bytes, tamaño, folder permitido) e IGNORA el contentType del cliente.
+    // Los flujos nuevos deben usar privateFiles.upload (almacenamiento privado).
     upload: ingemProtectedProcedure
       .input(z.object({
         fileName: z.string(),
         fileData: z.string(), // base64 encoded
-        contentType: z.string().default("application/pdf"),
+        contentType: z.string().default("application/pdf"), // ignorado: se detecta por contenido
         folder: z.string().default("documents"),
       }))
       .mutation(async ({ input }) => {
-        const buffer = Buffer.from(input.fileData, "base64");
+        const validated = validateFileUpload({
+          fileData: input.fileData,
+          fileName: input.fileName,
+          folder: input.folder,
+        });
+        if (!validated.ok) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: validated.error });
+        }
         const timestamp = Date.now();
         const randomSuffix = Math.random().toString(36).substring(2, 8);
-        const safeFileName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-        const fileKey = `${input.folder}/${timestamp}-${randomSuffix}-${safeFileName}`;
-        const { url } = await storagePut(fileKey, buffer, input.contentType);
+        const fileKey = `${validated.folder}/${timestamp}-${randomSuffix}-${validated.safeName}`;
+        // Se almacena con el MIME detectado por el servidor, no el del cliente.
+        const { url } = await storagePut(fileKey, validated.buffer, validated.mimeType);
         return { url, fileKey };
       }),
   }),
