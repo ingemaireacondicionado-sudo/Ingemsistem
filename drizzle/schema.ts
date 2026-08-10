@@ -1,4 +1,15 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean as mysqlBoolean } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean as mysqlBoolean, customType } from "drizzle-orm/mysql-core";
+
+/**
+ * Columna MEDIUMBLOB (hasta 16 MB) para almacenar bytes de archivos privados en
+ * TiDB. Drizzle no expone un helper nativo para MEDIUMBLOB, así que se define
+ * con customType. El valor viaja como Buffer en ambos sentidos.
+ */
+const mediumblob = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "mediumblob";
+  },
+});
 
 /**
  * Core user table backing Manus OAuth flow.
@@ -51,6 +62,40 @@ export const loginRateLimits = mysqlTable("login_rate_limits", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+/**
+ * Almacenamiento PRIVADO de archivos (órdenes de compra, facturas, documentos de
+ * técnicos). A diferencia del storage de Manus Forge (público), estos bytes viven
+ * en la base y sólo se sirven a través de un endpoint autenticado que verifica
+ * sesión, usuario activo y permisos por rol. La tabla NO guarda rutas ni URLs
+ * públicas: el contenido real está en `data` (MEDIUMBLOB) y el tipo se detecta y
+ * fija en el servidor (`mimeType`), nunca desde el cliente.
+ */
+export const privateFiles = mysqlTable("private_files", {
+  id: int("id").autoincrement().primaryKey(),
+  // Nombre "amigable" original (ya saneado en el servidor). Nunca se usa crudo en
+  // headers HTTP; sirve sólo como sugerencia de descarga.
+  originalName: varchar("originalName", { length: 255 }).notNull(),
+  // MIME REAL detectado por magic bytes en el servidor (no el del cliente).
+  mimeType: varchar("mimeType", { length: 100 }).notNull(),
+  // Tamaño en bytes del contenido real (post-decodificación base64).
+  sizeBytes: int("sizeBytes").notNull(),
+  // Bytes del archivo. MEDIUMBLOB soporta hasta 16 MB; nuestros límites reales
+  // son 8 MB (PDF) / 5 MB (imágenes).
+  data: mediumblob("data").notNull(),
+  // Categoría de negocio a la que pertenece el archivo.
+  category: mysqlEnum("category", ["purchase_order", "invoice", "technician_document"]).notNull(),
+  // Entidad asociada (p. ej. "job", "technician") y su id, para verificar la
+  // relación en la descarga. Nullable para no forzar el vínculo en el alta.
+  entityType: varchar("entityType", { length: 50 }),
+  entityId: int("entityId"),
+  // Usuario ingem que subió el archivo (auditoría).
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PrivateFile = typeof privateFiles.$inferSelect;
+export type InsertPrivateFile = typeof privateFiles.$inferInsert;
 
 /**
  * Customers

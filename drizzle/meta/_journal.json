@@ -57,6 +57,13 @@
       "when": 1786306486788,
       "tag": "0007_orange_alex_power",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1786323741816,
+      "tag": "0008_silly_guardsmen",
+      "breakpoints": true
     }
   ]
 }

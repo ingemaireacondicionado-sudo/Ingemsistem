@@ -3,7 +3,8 @@ import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
   customers, suppliers, products, technicians,
-  appointments, notes, transactions, jobs, ingemUsers, loginRateLimits
+  appointments, notes, transactions, jobs, ingemUsers, loginRateLimits,
+  privateFiles
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { hashPassword } from './passwordUtils';
@@ -212,6 +213,75 @@ export async function cleanupExpiredLoginRateLimits(olderThanMs: number, limit =
       ),
     )
     .limit(limit);
+}
+
+// ========== Private files (almacenamiento privado) ==========
+
+export type PrivateFileCategory = "purchase_order" | "invoice" | "technician_document";
+
+/**
+ * Inserta un archivo privado (bytes en la base). El buffer, el mime y el tamaño
+ * ya vienen validados por el servidor (magic bytes + límites). Devuelve el id.
+ */
+export async function insertPrivateFile(data: {
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  data: Buffer;
+  category: PrivateFileCategory;
+  entityType?: string | null;
+  entityId?: number | null;
+  createdBy?: number | null;
+}): Promise<{ id: number }> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const result = await db.insert(privateFiles).values({
+    originalName: data.originalName,
+    mimeType: data.mimeType,
+    sizeBytes: data.sizeBytes,
+    data: data.data,
+    category: data.category,
+    entityType: data.entityType ?? null,
+    entityId: data.entityId ?? null,
+    createdBy: data.createdBy ?? null,
+  });
+  return { id: result[0].insertId };
+}
+
+/**
+ * Obtiene un archivo privado por id (incluye los bytes). Devuelve null si no
+ * existe. Sólo debe invocarse desde un endpoint que ya verificó permisos.
+ */
+export async function getPrivateFileById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(privateFiles).where(eq(privateFiles.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Metadatos de un archivo privado (sin los bytes) por id. Útil para chequear la
+ * relación/entidad antes de servir el contenido.
+ */
+export async function getPrivateFileMetaById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db
+    .select({
+      id: privateFiles.id,
+      originalName: privateFiles.originalName,
+      mimeType: privateFiles.mimeType,
+      sizeBytes: privateFiles.sizeBytes,
+      category: privateFiles.category,
+      entityType: privateFiles.entityType,
+      entityId: privateFiles.entityId,
+      createdBy: privateFiles.createdBy,
+      createdAt: privateFiles.createdAt,
+    })
+    .from(privateFiles)
+    .where(eq(privateFiles.id, id))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 // ========== Customers ==========

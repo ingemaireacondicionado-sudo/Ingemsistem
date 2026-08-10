@@ -13,7 +13,52 @@ import { storagePut } from "./storage";
 import { generateIngemToken } from "./ingemAuth";
 import { hashPassword, verifyPassword } from "./passwordUtils";
 import { validateFileUpload, validateTechnicianDocuments } from "./fileValidation";
+import { canEdit, canAccessModule } from "@shared/permissions";
 import { isLoginRateLimited, registerFailedLogin, registerSuccessfulLogin, RATE_LIMIT_MESSAGE } from "./rateLimit";
+
+// ===== Archivos privados: mapeo de categoría y permisos =====
+type PrivateCategory = "purchase_order" | "invoice" | "technician_document";
+
+// Folder válido (de la allowlist de fileValidation) usado SÓLO para reutilizar
+// la validación de 7A; los archivos privados no viven en carpetas públicas.
+const FOLDER_FOR_CATEGORY: Record<PrivateCategory, string> = {
+  purchase_order: "oc",
+  invoice: "facturas",
+  technician_document: "technicians",
+};
+
+// Módulo cuyo acceso habilita ver el archivo (descarga).
+const MODULE_FOR_CATEGORY: Record<PrivateCategory, string> = {
+  purchase_order: "jobs",
+  invoice: "jobs",
+  technician_document: "technicians",
+};
+
+// Subir OC/factura ⇒ editar 'jobs'; documento de técnico ⇒ editar 'technicians'.
+function canUploadPrivateCategory(role: string, category: PrivateCategory): boolean {
+  if (category === "technician_document") return canEdit(role, "technicians");
+  return canEdit(role, "jobs");
+}
+
+// Descargar ⇒ acceso al módulo correspondiente (con override viewer/allowedModules).
+function canDownloadPrivateCategory(
+  role: string,
+  allowedModules: string[] | null,
+  category: PrivateCategory,
+): boolean {
+  return canAccessModule(role, allowedModules, MODULE_FOR_CATEGORY[category]);
+}
+
+// Parseo defensivo del JSON de allowedModules (string en DB). Nunca lanza.
+function safeParseModules(json: string | null): string[] | null {
+  if (!json) return null;
+  try {
+    const arr = JSON.parse(json);
+    return Array.isArray(arr) ? arr.filter((m) => typeof m === "string") : null;
+  } catch {
+    return null;
+  }
+}
 
 // Helper to generate recurring appointment dates
 function generateRecurringDates(startDate: string, endDate: string, type: string): string[] {
@@ -690,6 +735,86 @@ export const appRouter = router({
         // Se almacena con el MIME detectado por el servidor, no el del cliente.
         const { url } = await storagePut(fileKey, validated.buffer, validated.mimeType);
         return { url, fileKey };
+      }),
+  }),
+
+  // ========== Almacenamiento PRIVADO de archivos ==========
+  // A diferencia de files.upload (storage PÚBLICO de Forge, legacy), acá los
+  // bytes viven en la base (tabla private_files) y sólo se sirven a través de la
+  // query autenticada `download`, que revalida sesión, usuario activo y permisos
+  // por rol. El contentType se detecta por magic bytes; el del cliente se ignora.
+  privateFiles: router({
+    // Subir un archivo privado. Permiso por categoría:
+    //  - purchase_order / invoice -> requiere poder EDITAR 'jobs'.
+    //  - technician_document      -> requiere poder EDITAR 'technicians'.
+    // Un viewer nunca tiene canEdit, así que no puede escribir por acá.
+    upload: ingemProtectedProcedure
+      .input(z.object({
+        fileName: z.string(),
+        fileData: z.string(), // base64 (con o sin prefijo data:)
+        category: z.enum(["purchase_order", "invoice", "technician_document"]),
+        entityType: z.string().max(50).optional(),
+        entityId: z.number().int().positive().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const ingemUser = (ctx as any).ingemUser;
+        if (!canUploadPrivateCategory(ingemUser.role, input.category)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para subir este archivo." });
+        }
+        // Reutiliza toda la validación de 7A (magic bytes, tamaño real, nombre
+        // seguro). Se mapea la categoría a un folder válido sólo para validar.
+        const validated = validateFileUpload({
+          fileData: input.fileData,
+          fileName: input.fileName,
+          folder: FOLDER_FOR_CATEGORY[input.category],
+        });
+        if (!validated.ok) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: validated.error });
+        }
+        const inserted = await db.insertPrivateFile({
+          originalName: validated.safeName,
+          mimeType: validated.mimeType,
+          sizeBytes: validated.sizeBytes,
+          data: validated.buffer,
+          category: input.category,
+          entityType: input.entityType ?? null,
+          entityId: input.entityId ?? null,
+          createdBy: ingemUser.userId ?? null,
+        });
+        // NO se devuelven los bytes ni ninguna URL pública: sólo el id privado.
+        return { privateFileId: inserted.id };
+      }),
+
+    // Descargar un archivo privado. Revalida permisos por categoría (acceso al
+    // módulo correspondiente, con override de allowedModules para viewer) y
+    // devuelve el contenido en base64 + el nombre/mime seguros. El cliente arma
+    // el Blob y fuerza la descarga como adjunto. No se exponen headers con el
+    // nombre crudo del usuario: el nombre ya viene saneado en el servidor.
+    download: ingemProtectedProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .query(async ({ input, ctx }) => {
+        const ingemUser = (ctx as any).ingemUser;
+        const meta = await db.getPrivateFileMetaById(input.id);
+        if (!meta) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Archivo no encontrado." });
+        }
+        const allowed = ingemUser.allowedModules
+          ? safeParseModules(ingemUser.allowedModules)
+          : null;
+        if (!canDownloadPrivateCategory(ingemUser.role, allowed, meta.category)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para ver este archivo." });
+        }
+        const file = await db.getPrivateFileById(input.id);
+        if (!file) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Archivo no encontrado." });
+        }
+        const buf: Buffer = Buffer.isBuffer(file.data) ? file.data : Buffer.from(file.data as any);
+        return {
+          fileName: file.originalName, // ya saneado en el servidor
+          mimeType: file.mimeType, // detectado por magic bytes
+          sizeBytes: file.sizeBytes,
+          dataBase64: buf.toString("base64"),
+        };
       }),
   }),
 

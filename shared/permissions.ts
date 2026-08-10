@@ -59,6 +59,24 @@ export function hasModuleAccess(role: UserRole, module: string): boolean {
   return ROLE_PERMISSIONS[role].modules.includes(module);
 }
 
+/**
+ * Acceso a un módulo considerando el override de `allowedModules` para el rol
+ * viewer (un visualizador con módulos específicos asignados sólo ve esos).
+ * Fuente única compartida por frontend (AuthContext.hasAccess) y backend
+ * (descarga de archivos privados). Devuelve false para roles desconocidos.
+ */
+export function canAccessModule(
+  role: string,
+  allowedModules: string[] | null | undefined,
+  module: string,
+): boolean {
+  if (!isKnownRole(role)) return false;
+  if (role === "viewer" && allowedModules && allowedModules.length > 0) {
+    return allowedModules.includes(module);
+  }
+  return hasModuleAccess(role, module);
+}
+
 export function canCreate(role: string, entity: string): boolean {
   return isKnownRole(role) && ROLE_PERMISSIONS[role].canCreate.includes(entity);
 }

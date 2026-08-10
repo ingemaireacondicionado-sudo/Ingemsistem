@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import type { Job } from '@/types/job';
 import { formatCurrency, JOB_STATUS } from '@/types/job';
 import { useAuth } from '@/contexts/AuthContext';
+import { PrivateFileLink } from '@/components/PrivateFileLink';
 import { toast } from 'sonner';
 
 interface OCTrackerProps {
@@ -469,16 +470,11 @@ export function OCTracker({ jobs, onStatusChange }: OCTrackerProps) {
                                   </span>
                                 )}
                                 {item.job.purchaseOrderFileUrl && (
-                                  <a
-                                    href={item.job.purchaseOrderFileUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
+                                  <PrivateFileLink
+                                    value={item.job.purchaseOrderFileUrl}
+                                    label="Ver PDF OC"
                                     className="flex items-center gap-0.5 text-emerald-600 hover:text-emerald-800 font-medium"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <FileText className="w-3 h-3" />
-                                    Ver PDF OC
-                                  </a>
+                                  />
                                 )}
                               </div>
                               {/* Progress bar */}

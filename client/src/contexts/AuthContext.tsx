@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { UserRole, UserFormData } from '@/types/user';
-import { hasModuleAccess, canCreate, canEdit, canDelete } from '@/types/user';
+import { canAccessModule, canCreate, canEdit, canDelete } from '@/types/user';
 import { trpc } from '@/lib/trpc';
 
 // Simplified User type for auth context (no password exposed to frontend)
@@ -141,10 +141,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const hasAccess = useCallback((module: string): boolean => {
     if (!user) return false;
-    if (user.role === 'viewer' && user.allowedModules && user.allowedModules.length > 0) {
-      return user.allowedModules.includes(module);
-    }
-    return hasModuleAccess(user.role, module);
+    return canAccessModule(user.role, user.allowedModules, module);
   }, [user]);
 
   const canCreateEntity = useCallback((entity: string): boolean => {

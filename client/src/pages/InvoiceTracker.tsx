@@ -32,6 +32,7 @@ import { toast } from 'sonner';
 import { toLocalDateStr } from '@/lib/dateUtils';
 import { whatsappUrl } from '@/lib/contactUtils';
 import { useAuth } from '@/contexts/AuthContext';
+import { PrivateFileLink } from '@/components/PrivateFileLink';
 
 interface InvoiceTrackerProps {
   jobs: Job[];
@@ -689,16 +690,11 @@ export function InvoiceTracker({ jobs, onStatusChange: _onStatusChange }: Invoic
                                   Est. cobro: {formatDate(item.estimatedPayDate)}
                                 </span>
                                 {item.job.invoiceFileUrl && (
-                                  <a
-                                    href={item.job.invoiceFileUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
+                                  <PrivateFileLink
+                                    value={item.job.invoiceFileUrl}
+                                    label="Ver PDF"
                                     className="flex items-center gap-0.5 text-emerald-600 hover:text-emerald-800 font-medium"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <FileText className="w-3 h-3" />
-                                    Ver PDF
-                                  </a>
+                                  />
                                 )}
                               </div>
                               {/* Cobro parcial */}

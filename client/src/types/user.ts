@@ -4,6 +4,7 @@ export type { UserRole } from '@shared/permissions';
 export {
   ROLE_PERMISSIONS,
   hasModuleAccess,
+  canAccessModule,
   canCreate,
   canEdit,
   canDelete,

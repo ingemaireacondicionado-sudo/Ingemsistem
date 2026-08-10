@@ -25,7 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { FileUpload } from '@/components/FileUpload';
+import { PrivateFileUpload } from '@/components/PrivateFileUpload';
 import type { Job, JobFormData, JobProduct, JobCurrency } from '@/types/job';
 import { 
   JOB_STATUS,
@@ -619,12 +619,14 @@ export function JobForm({ jobs, customers, technicians, products, transactions =
                     />
                   </div>
                 </div>
-                <FileUpload
+                <PrivateFileUpload
                   label="PDF de Orden de Compra"
                   currentFileUrl={purchaseOrderFileUrl || undefined}
-                  onFileUploaded={(url) => setPurchaseOrderFileUrl(url)}
+                  onFileUploaded={(ref) => setPurchaseOrderFileUrl(ref)}
                   onFileRemoved={() => setPurchaseOrderFileUrl('')}
-                  folder="oc"
+                  category="purchase_order"
+                  entityType="job"
+                  entityId={isEditing && id ? Number(id) : undefined}
                 />
               </div>
             )}
@@ -685,12 +687,14 @@ export function JobForm({ jobs, customers, technicians, products, transactions =
                         className="h-11 sm:h-9 text-base sm:text-sm"
                       />
                     </div>
-                    <FileUpload
+                    <PrivateFileUpload
                       label="PDF de Factura"
                       currentFileUrl={invoiceFileUrl || undefined}
-                      onFileUploaded={(url) => setInvoiceFileUrl(url)}
+                      onFileUploaded={(ref) => setInvoiceFileUrl(ref)}
                       onFileRemoved={() => setInvoiceFileUrl('')}
-                      folder="facturas"
+                      category="invoice"
+                      entityType="job"
+                      entityId={isEditing && id ? Number(id) : undefined}
                     />
                   </div>
                 )}
