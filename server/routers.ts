@@ -111,6 +111,18 @@ function jobBindingsFromNotes(notes: string | undefined | null): db.JobFileBindi
   return bindings;
 }
 
+// Parseo seguro del blob `notes` de un job (JSON con datos financieros/meta).
+// Devuelve un objeto plano; {} si no es un objeto JSON válido. Nunca lanza.
+function parseJobMeta(notes: string | undefined | null): Record<string, unknown> {
+  if (!notes || typeof notes !== "string" || !notes.trim().startsWith("{")) return {};
+  try {
+    const o = JSON.parse(notes);
+    return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
 // Mapea el error de asociación (capa db, desacoplada de tRPC) a un TRPCError con
 // el código correcto para el cliente.
 function throwAsTrpc(e: unknown): never {
@@ -497,16 +509,17 @@ export const appRouter = router({
         productNames: z.string().optional(), address: z.string().optional(),
         notes: z.string().optional(),
         completionNotes: z.string().optional(),
+        // completedBy se acepta por compatibilidad pero un update genérico NUNCA
+        // lo escribe: sólo el flujo `complete` fija quién completó la cita.
         completedBy: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
-        // If marking as completed, set completedAt timestamp
+        // Identidad inmutable: un update no puede falsificar completedBy.
+        delete (data as { completedBy?: unknown }).completedBy;
+        // If marking as completed, set completedAt timestamp (server-side).
         const updateData: any = { ...data };
-        if (data.status === "completed" && !data.completedBy) {
-          updateData.completedAt = new Date();
-        }
-        if (data.completionNotes || data.completedBy) {
+        if (data.status === "completed" || data.completionNotes) {
           updateData.completedAt = new Date();
         }
         if (data.status) {
@@ -528,14 +541,18 @@ export const appRouter = router({
       .input(z.object({
         id: z.number(),
         completionNotes: z.string(),
-        completedBy: z.string(),
+        // completedBy se acepta por compatibilidad con el frontend pero NO se
+        // confía: se deriva del usuario autenticado que ejecuta `complete`.
+        completedBy: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        const ingemUser = (ctx as any).ingemUser;
         const old = await db.getAppointmentById(input.id);
         await db.updateAppointment(input.id, {
           status: "completed",
           completionNotes: input.completionNotes,
-          completedBy: input.completedBy,
+          // Identidad del backend: nunca el valor del cliente.
+          completedBy: ingemUser.name,
           completedAt: new Date(),
         });
         if (old && old.status !== "completed") {
@@ -568,14 +585,19 @@ export const appRouter = router({
         priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
         status: z.enum(["pending", "in-progress", "completed"]).default("pending"),
         category: z.string().default("general"), dueDate: z.string().default(""),
+        // createdBy se sigue aceptando por compatibilidad con el frontend, pero
+        // NO se confía: la autoría se deriva del usuario autenticado (ver mutation).
         assignedTo: z.string().default(""), createdBy: z.string().default(""),
         customerId: z.number().nullable().default(null),
         customerName: z.string().default(""),
         documentType: z.enum(["none", "budget", "invoice"]).default("none"),
         documentNumber: z.string().default(""),
       }))
-      .mutation(async ({ input }) => {
-        const result = await db.createNote(input);
+      .mutation(async ({ input, ctx }) => {
+        const ingemUser = (ctx as any).ingemUser;
+        // Autoría derivada del backend: se ignora cualquier createdBy del cliente
+        // y se guarda el NOMBRE del usuario autenticado (formato legacy de notes).
+        const result = await db.createNote({ ...input, createdBy: ingemUser.name });
         if (input.priority === "urgent") {
           notify.notifyUrgentNote({
             title: input.title,
@@ -591,13 +613,22 @@ export const appRouter = router({
         priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
         status: z.enum(["pending", "in-progress", "completed"]).optional(),
         category: z.string().optional(), dueDate: z.string().optional(),
+        // createdBy se acepta por compatibilidad pero es INMUTABLE: se descarta y
+        // nunca sobreescribe la autoría original (ver mutation).
         assignedTo: z.string().optional(), createdBy: z.string().optional(),
         customerId: z.number().nullable().optional(),
         customerName: z.string().optional(),
         documentType: z.enum(["none", "budget", "invoice"]).optional(),
         documentNumber: z.string().optional(),
       }))
-      .mutation(async ({ input }) => { const { id, ...data } = input; await db.updateNote(id, data); return { success: true }; }),
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        // Autoría inmutable: nunca se escribe createdBy en un update (se preserva
+        // el creador original guardado en la columna).
+        delete (data as { createdBy?: unknown }).createdBy;
+        await db.updateNote(id, data);
+        return { success: true };
+      }),
     delete: ingemDeleteProcedure("notes").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteNote(input.id)),
   }),
 
@@ -658,13 +689,20 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const ingemUser = (ctx as any).ingemUser;
+        // Autoría derivada del backend dentro del blob `notes`: se IGNORA cualquier
+        // createdBy/createdByName del cliente y se sella el id + nombre del usuario
+        // autenticado. El resto del meta (financiero) queda intacto (F2/F3 aparte).
+        const meta = parseJobMeta(input.notes);
+        meta.createdBy = ingemUser.userId;
+        meta.createdByName = ingemUser.name;
+        const jobData = { ...input, notes: JSON.stringify(meta) };
         // Job + asociación de archivos en UNA sola transacción: si la validación
         // de pertenencia o el sellado fallan, se hace rollback del job completo
         // (no quedan estados parciales).
         let result: { id: number };
         try {
           result = await db.createJobWithFileBindings(
-            input,
+            jobData,
             jobBindingsFromNotes(input.notes),
             ingemUser.userId,
           );
@@ -696,17 +734,29 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const ingemUser = (ctx as any).ingemUser;
         const { id, ...data } = input;
-        if (data.status) {
-          const old = await db.getJobById(id);
-          if (old && old.status !== data.status) {
-            notify.notifyJobStatusChanged({
-              jobNumber: old.jobNumber,
-              title: old.title,
-              customerName: old.customerName ?? undefined,
-              oldStatus: old.status,
-              newStatus: data.status,
-            }).catch(() => {});
-          }
+        // Se carga el job actual una sola vez (para notificación de estado y para
+        // preservar la autoría original del blob `notes`).
+        const old = await db.getJobById(id);
+        if (data.status && old && old.status !== data.status) {
+          notify.notifyJobStatusChanged({
+            jobNumber: old.jobNumber,
+            title: old.title,
+            customerName: old.customerName ?? undefined,
+            oldStatus: old.status,
+            newStatus: data.status,
+          }).catch(() => {});
+        }
+        // Autoría INMUTABLE dentro de `notes`: se preserva el createdBy/createdByName
+        // del creador ORIGINAL y se ignora lo que mande el cliente. Legacy: si el
+        // job original no tiene autoría, NO se inventa (se omite del meta nuevo).
+        if (data.notes !== undefined) {
+          const oldMeta = parseJobMeta(old?.notes);
+          const newMeta = parseJobMeta(data.notes);
+          if ("createdBy" in oldMeta) newMeta.createdBy = oldMeta.createdBy;
+          else delete newMeta.createdBy;
+          if ("createdByName" in oldMeta) newMeta.createdByName = oldMeta.createdByName;
+          else delete newMeta.createdByName;
+          data.notes = JSON.stringify(newMeta);
         }
         // Si el update trae `notes`, se reconcilian las asociaciones (vincular las
         // nuevas, DESVINCULAR las que el job ya no referencia) en la misma
