@@ -691,11 +691,14 @@ export const appRouter = router({
         const ingemUser = (ctx as any).ingemUser;
         // Autoría derivada del backend dentro del blob `notes`: se IGNORA cualquier
         // createdBy/createdByName del cliente y se sella el id + nombre del usuario
-        // autenticado. El resto del meta (financiero) queda intacto (F2/F3 aparte).
+        // autenticado. (Los costos del meta quedan intactos; se tratan en F2/F3.)
         const meta = parseJobMeta(input.notes);
         meta.createdBy = ingemUser.userId;
         meta.createdByName = ingemUser.name;
-        const jobData = { ...input, notes: JSON.stringify(meta) };
+        // 8B-1: estado financiero inicial SEGURO, no lo decide el cliente. Un job
+        // nuevo nace sin cobros (no hay flujo legítimo que cree un job ya pagado).
+        meta.amountPaid = 0;
+        const jobData = { ...input, notes: JSON.stringify(meta), paymentStatus: "pending" };
         // Job + asociación de archivos en UNA sola transacción: si la validación
         // de pertenencia o el sellado fallan, se hace rollback del job completo
         // (no quedan estados parciales).

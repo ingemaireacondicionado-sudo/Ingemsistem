@@ -167,7 +167,8 @@ describe("JOBS — createdBy/createdByName dentro de notes", () => {
     const m = parse(res.id);
     expect(m.laborCost).toBe("100");
     expect(m.materialsCost).toBe("20");
-    expect(m.amountPaid).toBe("50");
+    // 8B-1: en create el server fuerza amountPaid=0 (el "50" del cliente se ignora).
+    expect(m.amountPaid).toBe(0);
     expect(m.currency).toBe("USD");
     expect(m.productsUsed).toEqual([{ productId: 7 }]);
   });

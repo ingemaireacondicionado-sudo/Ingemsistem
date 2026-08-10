@@ -148,7 +148,10 @@ export function useJobs() {
       consumerFinalAddress: data.consumerFinalAddress,
       currency: data.currency ?? 'ARS',
       laborCost: data.laborCost, materialsCost: data.materialsCost, otherCosts: data.otherCosts,
-      ivaRate: data.ivaRate, amountPaid: existingJob?.amountPaid ?? 0,
+      ivaRate: data.ivaRate,
+      // 8B-1: una edición normal NO envía datos de cobranza. amountPaid es
+      // propiedad del flujo de cobros; el backend lo preserva desde la DB
+      // (se sigue LEYENDO amountPaid para mostrar saldo, sólo no se escribe acá).
       productsUsed: data.productsUsed, userNotes: data.notes, invoiceNotes: data.invoiceNotes,
       createdBy: existingJob?.createdBy ?? '', createdByName: existingJob?.createdByName ?? '',
     });
@@ -163,7 +166,8 @@ export function useJobs() {
       budgetNumber: data.budgetNumber ?? '', budgetAmount: String(data.budgetAmount ?? 0),
       invoiceNumber: data.invoiceNumber ?? '', invoiceAmount: String(totals.totalAmount),
       purchaseOrder: data.hasPurchaseOrder ? (data.purchaseOrderNumber ?? 'SI') : '',
-      paymentStatus: existingJob?.amountPaid && existingJob.amountPaid >= totals.totalAmount ? 'completed' : 'pending',
+      // 8B-1: paymentStatus NO se envía en una edición normal; lo controla el
+      // flujo de cobranza y el backend lo preserva desde la DB.
       startDate: data.startDate, endDate: data.endDate ?? '', notes: meta,
     });
   }, [uM, jobs]);

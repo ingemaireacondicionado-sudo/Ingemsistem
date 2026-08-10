@@ -358,6 +358,17 @@ export async function createJobWithFileBindings(
   });
 }
 
+// Parseo seguro de un blob `notes` (JSON meta). Devuelve {} si no es objeto.
+function parseMetaObject(notes: unknown): Record<string, unknown> {
+  if (typeof notes !== "string" || !notes.trim().startsWith("{")) return {};
+  try {
+    const o = JSON.parse(notes);
+    return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Actualiza un job y RECONCILIA sus archivos private:<id> en la misma
  * transacción. Cuando `bindings` es null (update sin `notes`) no se tocan las
@@ -368,6 +379,15 @@ export async function createJobWithFileBindings(
  *    NO están referenciados. Así un archivo reemplazado deja de ser descargable
  *    por acceso al job (queda accesible sólo para su autor, como huérfano).
  * Cualquier fallo => rollback completo (el job conserva su estado anterior).
+ *
+ * BLINDAJE FINANCIERO (8B-1): jobs.update NUNCA modifica los campos de cobranza.
+ * Dentro de la MISMA transacción se BLOQUEA la fila del job (FOR UPDATE) y se
+ * toma de ahí el estado financiero vigente para preservarlo, evitando que una
+ * edición con datos viejos pise un cobro concurrente:
+ *  - `paymentStatus` (columna): se conserva el valor de la DB (se ignora el del cliente);
+ *  - `notes.amountPaid`: se conserva el valor real vigente (legacy sin amountPaid: se omite, equivale a 0).
+ * El resto de `notes` (descriptivos, costos, autoría 8A, refs private:<id> del
+ * punto 7, metadata desconocida) se preserva tal cual viene en jobData.
  */
 export async function updateJobWithFileBindings(
   jobId: number,
@@ -378,7 +398,30 @@ export async function updateJobWithFileBindings(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db.transaction(async (tx) => {
-    await tx.update(jobs).set(jobData).where(eq(jobs.id, jobId));
+    // 1) Bloquear la fila y leer el estado financiero protegido VIGENTE.
+    const lockedRows = await tx
+      .select({ notes: jobs.notes, paymentStatus: jobs.paymentStatus })
+      .from(jobs)
+      .where(eq(jobs.id, jobId))
+      .for("update");
+    const locked = lockedRows[0];
+
+    // 2) Construir el payload preservando amountPaid/paymentStatus desde la fila
+    //    bloqueada (no desde una lectura previa fuera de la transacción).
+    const finalData: any = { ...jobData };
+    // paymentStatus: siempre el de la DB; el cliente nunca lo controla por acá.
+    finalData.paymentStatus = locked ? locked.paymentStatus : undefined;
+    if (finalData.paymentStatus === undefined) delete finalData.paymentStatus;
+    // amountPaid dentro de notes: preservar el valor real vigente.
+    if (finalData.notes !== undefined) {
+      const lockedMeta = parseMetaObject(locked?.notes);
+      const newMeta = parseMetaObject(finalData.notes);
+      if ("amountPaid" in lockedMeta) newMeta.amountPaid = lockedMeta.amountPaid;
+      else delete newMeta.amountPaid; // legacy sin amountPaid: no se inventa (equivale a 0)
+      finalData.notes = JSON.stringify(newMeta);
+    }
+
+    await tx.update(jobs).set(finalData).where(eq(jobs.id, jobId));
     if (bindings === null) return; // update sin `notes`: no reconciliar
     // 1) Vincular (validando) los archivos declarados.
     for (const b of bindings) {
