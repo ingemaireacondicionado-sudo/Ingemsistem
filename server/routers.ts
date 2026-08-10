@@ -15,6 +15,7 @@ import { hashPassword, verifyPassword } from "./passwordUtils";
 import { validateFileUpload, validateTechnicianDocuments } from "./fileValidation";
 import { canEdit, canAccessModule } from "@shared/permissions";
 import { isLoginRateLimited, registerFailedLogin, registerSuccessfulLogin, RATE_LIMIT_MESSAGE } from "./rateLimit";
+import { parsePaymentAmountCents } from "./money";
 
 // ===== Archivos privados: mapeo de categoría y permisos =====
 type PrivateCategory = "purchase_order" | "invoice" | "technician_document";
@@ -783,63 +784,44 @@ export const appRouter = router({
         notes: z.string().default(""),
       }))
       .mutation(async ({ input }) => {
-        const job = await db.getJobById(input.jobId);
-        if (!job) throw new Error("Trabajo no encontrado");
-
-        let meta: any = {};
-        try { meta = (job.notes ?? '').startsWith('{') ? JSON.parse(job.notes ?? '') : {}; } catch { meta = {}; }
-        const prevAmountPaid = parseFloat(meta.amountPaid ?? '0');
-        const newAmountPaid = prevAmountPaid + parseFloat(input.amount);
-        meta.amountPaid = newAmountPaid;
-
-        const laborCost = parseFloat(meta.laborCost ?? '0');
-        const materialsCost = parseFloat(meta.materialsCost ?? '0');
-        const otherCosts = parseFloat(meta.otherCosts ?? '0');
-        const ivaRate = parseFloat(meta.ivaRate ?? '0');
-        const subtotal = laborCost + materialsCost + otherCosts;
-        const ivaAmount = (subtotal * ivaRate) / 100;
-        const totalAmount = subtotal + ivaAmount;
-        const isFullyPaid = newAmountPaid >= totalAmount;
-
-        await db.updateJob(input.jobId, {
-          status: isFullyPaid ? 'collected' : job.status,
-          paymentStatus: isFullyPaid ? 'completed' : 'partial',
-          notes: JSON.stringify(meta),
-        });
-
-        const txResult = await db.createTransaction({
-          type: 'income',
-          category: 'Cobro de trabajo',
-          description: `Cobro ${job.jobNumber} - ${job.title} (${job.customerName ?? 'Sin cliente'})`,
-          amount: input.amount,
-          date: input.date,
-          paymentMethod: input.paymentMethod,
-          status: 'completed',
-          reference: job.jobNumber ?? '',
-          customerId: job.customerId ?? null,
-          customerName: job.customerName ?? '',
-          supplierId: null,
-          supplierName: '',
-          invoiceType: meta.invoiceType ?? '',
-          invoiceNumber: job.invoiceNumber ?? '',
-          ivaRate: String(ivaRate),
-          ivaAmount: String((parseFloat(input.amount) * ivaRate) / (100 + ivaRate)),
-          totalWithIva: input.amount,
-          cuitComprador: '',
-          cuitVendedor: job.customerCuit ?? '',
-          relatedJobId: input.jobId,
-          notes: input.notes || `Cobro registrado desde Cobranzas - ${job.jobNumber}`,
-        });
+        // 8B-2: validación ESTRICTA del monto (centavos), sin confiar en el cliente.
+        const parsed = parsePaymentAmountCents(input.amount);
+        if (!parsed.ok) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: db.PAYMENT_ERR.INVALID_AMOUNT });
+        }
+        // 8B-3: toda la operación (validación de saldo/IVA/notes + update job +
+        // insert transaction) ocurre en UNA transacción con la fila bloqueada.
+        let result: db.RegisterPaymentResult;
+        try {
+          result = await db.registerJobPaymentAtomic({
+            jobId: input.jobId,
+            amountCents: parsed.cents,
+            date: input.date,
+            paymentMethod: input.paymentMethod,
+            notes: input.notes,
+          });
+        } catch (e) {
+          if (e instanceof db.PaymentError) {
+            throw new TRPCError({ code: e.code, message: e.message });
+          }
+          throw e;
+        }
 
         notify.notifyJobStatusChanged({
-          jobNumber: job.jobNumber ?? '',
-          title: job.title ?? '',
-          customerName: job.customerName ?? undefined,
-          oldStatus: job.status ?? 'invoiced',
-          newStatus: isFullyPaid ? 'collected' : job.status ?? 'invoiced',
+          jobNumber: result.jobNumber,
+          title: result.title,
+          customerName: result.customerName ?? undefined,
+          oldStatus: result.oldStatus,
+          newStatus: result.newStatus,
         }).catch(() => {});
 
-        return { success: true, transactionId: txResult.id, isFullyPaid, newAmountPaid, totalAmount };
+        return {
+          success: true,
+          transactionId: result.transactionId,
+          isFullyPaid: result.isFullyPaid,
+          newAmountPaid: result.newAmountPaid,
+          totalAmount: result.totalAmount,
+        };
       }),
   }),
 

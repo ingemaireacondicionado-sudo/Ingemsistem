@@ -93,9 +93,11 @@ describe("MANAGER — permisos de la UI", () => {
     await allowedWrite(c.customers.delete({ id: 1 }));
   });
   it("puede registrar cobros (editar jobs + crear transacciones)", async () => {
-    // registerPayment permitido: llega al resolver y falla por 'Trabajo no encontrado' (sin DB), no por permisos.
+    // registerPayment permitido: pasa la autorización y llega a la capa db, que
+    // sin DB falla con NO_DB (no por permisos). El monto "100" es válido, así que
+    // no lo corta la validación estricta de 8B-2.
     await expect(caller("manager").jobs.registerPayment({ jobId: 1, amount: "100", date: "2026-08-08" }))
-      .rejects.toThrow("Trabajo no encontrado");
+      .rejects.toThrow(NO_DB);
   });
   it("NO puede eliminar técnicos (reservado a admin)", async () => {
     await denied(caller("manager").technicians.delete({ id: 1 }));

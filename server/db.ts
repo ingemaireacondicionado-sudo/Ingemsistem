@@ -8,6 +8,7 @@ import {
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { hashPassword } from './passwordUtils';
+import { readStoredMoneyCents, readStoredRate, centsToNumber } from './money';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -724,6 +725,159 @@ export async function deleteJob(id: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db.delete(jobs).where(eq(jobs.id, id));
+}
+
+// ========== Cobranzas (8B-2/8B-3): registro de pago atómico y validado ==========
+
+// Error funcional del flujo de cobro. El router lo mapea a TRPCError con el
+// código correcto. Los mensajes son de negocio (nunca exponen SQL/stack).
+export class PaymentError extends Error {
+  constructor(public code: "BAD_REQUEST" | "NOT_FOUND", message: string) {
+    super(message);
+    this.name = "PaymentError";
+  }
+}
+
+export const PAYMENT_ERR = {
+  INVALID_AMOUNT: "El monto del cobro no es válido.",
+  OVER_BALANCE: "El cobro supera el saldo pendiente del trabajo.",
+  ALREADY_PAID: "El trabajo ya está totalmente cobrado.",
+  IVA_MISSING: "El trabajo no tiene una alícuota de IVA definida. Editalo antes de registrar el cobro.",
+  INCOMPLETE: "El trabajo tiene datos financieros incompletos. Revisalo antes de registrar el cobro.",
+  NOT_FOUND: "Trabajo no encontrado.",
+} as const;
+
+export type RegisterPaymentResult = {
+  transactionId: number;
+  isFullyPaid: boolean;
+  newAmountPaid: number;
+  totalAmount: number;
+  jobNumber: string;
+  title: string;
+  customerName: string | null;
+  oldStatus: string;
+  newStatus: string;
+};
+
+/**
+ * Registra un cobro de forma ATÓMICA (8B-2/8B-3). Toda la operación ocurre en
+ * UNA sola transacción de DB con la fila del job BLOQUEADA (FOR UPDATE):
+ *  1) lock + lectura del job vigente; 2) parseo seguro de notes; 3) IVA
+ *  obligatorio (sin default silencioso); 4) total en centavos; 5) amountPaid
+ *  vigente (legacy incluido); 6) saldo y validación del monto (no overpay);
+ *  7) update de amountPaid/paymentStatus/status; 8) insert de la transaction de
+ *  cobro en la MISMA transacción. Cualquier fallo => ROLLBACK completo. NO hace
+ *  backfill de cobros legacy ni exige amountPaid == SUM(transactions) (eso es 8B-5).
+ * `amountCents` ya viene validado (estricto) por el router.
+ */
+export async function registerJobPaymentAtomic(params: {
+  jobId: number;
+  amountCents: number;
+  date: string;
+  paymentMethod: string;
+  notes: string;
+}): Promise<RegisterPaymentResult> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  return db.transaction(async (tx) => {
+    // 1) Lock del job.
+    const rows = await tx.select().from(jobs).where(eq(jobs.id, params.jobId)).for("update");
+    const job = rows[0];
+    if (!job) throw new PaymentError("NOT_FOUND", PAYMENT_ERR.NOT_FOUND);
+
+    // 2) Parsear notes del job BLOQUEADO. Vacío/ inválido → incompleto (no repara).
+    const raw = job.notes;
+    if (typeof raw !== "string" || !raw.trim().startsWith("{")) {
+      throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
+    }
+    let meta: Record<string, unknown>;
+    try {
+      const o = JSON.parse(raw);
+      if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("meta");
+      meta = o as Record<string, unknown>;
+    } catch {
+      throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
+    }
+
+    // 3) IVA obligatorio: sin default silencioso (ni 0 ni 21).
+    if (meta.ivaRate === undefined || meta.ivaRate === null || meta.ivaRate === "") {
+      throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.IVA_MISSING);
+    }
+    const rate = readStoredRate(meta.ivaRate);
+    if (rate === null) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
+
+    // 4) Total en centavos desde la fila bloqueada.
+    const labor = readStoredMoneyCents(meta.laborCost);
+    const materials = readStoredMoneyCents(meta.materialsCost);
+    const other = readStoredMoneyCents(meta.otherCosts);
+    if (labor === null || materials === null || other === null) {
+      throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
+    }
+    const subtotalCents = labor + materials + other;
+    const ivaCents = Math.round((subtotalCents * rate) / 100);
+    const totalCents = subtotalCents + ivaCents;
+
+    // 5) amountPaid ACTUAL (previo/legacy) desde la fila bloqueada.
+    const prevCents = readStoredMoneyCents(meta.amountPaid);
+    if (prevCents === null) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
+
+    // 6) Saldo y validación del monto (sin overpay). Se calcula con el job bloqueado.
+    const balanceCents = totalCents - prevCents;
+    if (balanceCents <= 0) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.ALREADY_PAID);
+    if (params.amountCents > balanceCents) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.OVER_BALANCE);
+
+    const newCents = prevCents + params.amountCents;
+    const isFullyPaid = newCents >= totalCents; // con no-overpay ⇒ === total
+    const newStatus = isFullyPaid ? "collected" : job.status;
+    const newPaymentStatus = isFullyPaid ? "completed" : "partial";
+
+    // 7) Actualizar el job preservando el resto del meta (autoría, refs, costos…).
+    const newMeta = { ...meta, amountPaid: centsToNumber(newCents) };
+    await tx
+      .update(jobs)
+      .set({ status: newStatus, paymentStatus: newPaymentStatus, notes: JSON.stringify(newMeta) })
+      .where(eq(jobs.id, params.jobId));
+
+    // 8) Crear la transaction de cobro en la MISMA transacción. Campos sensibles
+    //    (type/category/relatedJobId) fijados server-side; el cliente no los controla.
+    const amountNum = centsToNumber(params.amountCents);
+    const ivaAmountNum = Math.round(((amountNum * rate) / (100 + rate)) * 100) / 100; // IVA incluido (semántica actual)
+    const insertRes = await tx.insert(transactions).values({
+      type: "income",
+      category: "Cobro de trabajo",
+      description: `Cobro ${job.jobNumber} - ${job.title} (${job.customerName ?? "Sin cliente"})`,
+      amount: String(amountNum),
+      date: params.date,
+      paymentMethod: params.paymentMethod,
+      status: "completed",
+      reference: job.jobNumber ?? "",
+      customerId: job.customerId ?? null,
+      customerName: job.customerName ?? "",
+      supplierId: null,
+      supplierName: "",
+      invoiceType: typeof meta.invoiceType === "string" ? meta.invoiceType : "",
+      invoiceNumber: job.invoiceNumber ?? "",
+      ivaRate: String(rate),
+      ivaAmount: String(ivaAmountNum),
+      totalWithIva: String(amountNum),
+      cuitComprador: "",
+      cuitVendedor: job.customerCuit ?? "",
+      relatedJobId: params.jobId,
+      notes: params.notes || `Cobro registrado desde Cobranzas - ${job.jobNumber}`,
+    });
+
+    return {
+      transactionId: insertRes[0].insertId,
+      isFullyPaid,
+      newAmountPaid: centsToNumber(newCents),
+      totalAmount: centsToNumber(totalCents),
+      jobNumber: job.jobNumber ?? "",
+      title: job.title ?? "",
+      customerName: job.customerName ?? null,
+      oldStatus: job.status ?? "invoiced",
+      newStatus: newStatus ?? "invoiced",
+    };
+  });
 }
 
 export async function getNextBudgetNumber(): Promise<string> {
