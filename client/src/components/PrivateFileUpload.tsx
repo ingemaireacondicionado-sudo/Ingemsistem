@@ -28,8 +28,6 @@ interface PrivateFileUploadProps {
   // (no hay borrado permanente): la fila queda sin referenciar.
   onFileRemoved: () => void;
   category: 'purchase_order' | 'invoice';
-  entityType?: string;
-  entityId?: number;
   accept?: string;
   // Límite de tamaño en cliente (el servidor vuelve a validar por tipo real).
   maxSizeMB?: number;
@@ -41,8 +39,6 @@ export function PrivateFileUpload({
   onFileUploaded,
   onFileRemoved,
   category,
-  entityType,
-  entityId,
   accept = '.pdf,.jpg,.jpeg,.png,.webp',
   maxSizeMB = 8,
 }: PrivateFileUploadProps) {
@@ -81,8 +77,6 @@ export function PrivateFileUpload({
         fileName: file.name,
         fileData: base64,
         category,
-        entityType,
-        entityId,
       });
       onFileUploaded(`${PRIVATE_PREFIX}${result.privateFileId}`);
     } catch (err) {

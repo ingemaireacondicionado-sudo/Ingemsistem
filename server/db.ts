@@ -260,6 +260,16 @@ export async function getPrivateFileById(id: number) {
 }
 
 /**
+ * Asocia (server-side) un archivo privado a una entidad. Se usa al crear/editar
+ * un trabajo para "sellar" la relación archivo→job, nunca desde el cliente.
+ */
+export async function setPrivateFileEntity(id: number, entityType: string, entityId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(privateFiles).set({ entityType, entityId }).where(eq(privateFiles.id, id));
+}
+
+/**
  * Metadatos de un archivo privado (sin los bytes) por id. Útil para chequear la
  * relación/entidad antes de servir el contenido.
  */

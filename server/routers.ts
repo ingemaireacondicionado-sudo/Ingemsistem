@@ -60,6 +60,100 @@ function safeParseModules(json: string | null): string[] | null {
   }
 }
 
+// ===== Acceso a la ENTIDAD relacionada (choke point anti-IDOR) =====
+// Puntos únicos donde se decide si un usuario puede acceder a un job/técnico
+// concreto. Hoy el modelo de la app es por MÓDULO (todo usuario con el módulo ve
+// todos los registros); si en el futuro se agregan reglas por registro
+// (asignación, propiedad), se aplican ACÁ y la descarga las respeta sin más
+// cambios. `job`/`tech` se reciben ya cargados desde la base.
+function canAccessJob(role: string, allowedModules: string[] | null, _job: unknown): boolean {
+  return canAccessModule(role, allowedModules, "jobs");
+}
+function canAccessTechnician(role: string, allowedModules: string[] | null, _tech: unknown): boolean {
+  return canAccessModule(role, allowedModules, "technicians");
+}
+
+// Extrae, del blob `notes` (JSON del cliente), las referencias private:<id> de
+// OC y factura. Devuelve sólo ids numéricos válidos. Nunca lanza.
+function extractJobPrivateRefs(notes: string | undefined | null): {
+  purchase_order?: number;
+  invoice?: number;
+} {
+  const out: { purchase_order?: number; invoice?: number } = {};
+  if (!notes || typeof notes !== "string" || !notes.trim().startsWith("{")) return out;
+  let meta: any;
+  try {
+    meta = JSON.parse(notes);
+  } catch {
+    return out;
+  }
+  const parseRef = (v: unknown): number | undefined => {
+    if (typeof v !== "string" || !v.startsWith("private:")) return undefined;
+    const id = Number(v.slice("private:".length));
+    return Number.isInteger(id) && id > 0 ? id : undefined;
+  };
+  const oc = parseRef(meta?.purchaseOrderFileUrl);
+  const inv = parseRef(meta?.invoiceFileUrl);
+  if (oc) out.purchase_order = oc;
+  if (inv) out.invoice = inv;
+  return out;
+}
+
+/**
+ * Valida y ASOCIA (server-side) las referencias private:<id> de un trabajo.
+ * Reglas anti-IDOR al crear/editar un job:
+ *  - la categoría del archivo debe coincidir con el slot (OC/factura);
+ *  - si el archivo ya está asociado a OTRO job -> se rechaza (no se puede
+ *    "robar"/revincular un archivo ajeno);
+ *  - si aún no está asociado, sólo su autor (createdBy) puede vincularlo (evita
+ *    adjuntar archivos temporales de otros usuarios);
+ *  - la asociación (entityType='job', entityId=jobId) la sella el servidor.
+ * Idempotente: re-guardar el mismo job con el mismo archivo no falla.
+ * Cuando `jobId` es undefined (validación previa a crear el job) sólo se validan
+ * categoría/pertenencia; el sellado se hace después con jobId.
+ */
+async function validateJobPrivateRefs(
+  notes: string | undefined | null,
+  userId: number,
+  jobId?: number,
+): Promise<void> {
+  const refs = extractJobPrivateRefs(notes);
+  const slots: PrivateCategory[] = ["purchase_order", "invoice"];
+  for (const category of slots) {
+    const id = refs[category as "purchase_order" | "invoice"];
+    if (!id) continue;
+    const meta = await db.getPrivateFileMetaById(id);
+    if (!meta || meta.category !== category) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Archivo adjunto inválido." });
+    }
+    const alreadyBound = meta.entityId != null;
+    const boundToThisJob = meta.entityType === "job" && meta.entityId === jobId;
+    if (alreadyBound && !boundToThisJob) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "El archivo pertenece a otro trabajo." });
+    }
+    if (!alreadyBound && meta.createdBy !== userId) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "No podés adjuntar un archivo que no subiste." });
+    }
+  }
+}
+
+// Sella la asociación de los archivos private:<id> de un job (una vez que el job
+// existe y ya se validó la pertenencia con validateJobPrivateRefs).
+async function bindJobPrivateRefs(notes: string | undefined | null, jobId: number): Promise<void> {
+  const refs = extractJobPrivateRefs(notes);
+  const entries: Array<["purchase_order" | "invoice", number | undefined]> = [
+    ["purchase_order", refs.purchase_order],
+    ["invoice", refs.invoice],
+  ];
+  for (const [, id] of entries) {
+    if (!id) continue;
+    const meta = await db.getPrivateFileMetaById(id);
+    if (meta && meta.entityId == null) {
+      await db.setPrivateFileEntity(id, "job", jobId);
+    }
+  }
+}
+
 // Helper to generate recurring appointment dates
 function generateRecurringDates(startDate: string, endDate: string, type: string): string[] {
   const dates: string[] = [];
@@ -596,8 +690,14 @@ export const appRouter = router({
         paymentStatus: z.string().default("pending"), startDate: z.string().default(""),
         endDate: z.string().default(""), notes: z.string().default(""),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        const ingemUser = (ctx as any).ingemUser;
+        // Anti-IDOR: validar la pertenencia de los archivos private:<id> ANTES de
+        // crear el job (no requiere el jobId todavía).
+        await validateJobPrivateRefs(input.notes, ingemUser.userId);
         const result = await db.createJob(input);
+        // Sellar la asociación archivo→job una vez que el job existe.
+        await bindJobPrivateRefs(input.notes, result.id);
         notify.notifyJobCreated({
           jobNumber: input.jobNumber,
           title: input.title,
@@ -620,8 +720,12 @@ export const appRouter = router({
         paymentStatus: z.string().optional(), startDate: z.string().optional(),
         endDate: z.string().optional(), notes: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        const ingemUser = (ctx as any).ingemUser;
         const { id, ...data } = input;
+        // Anti-IDOR: validar pertenencia de los archivos private:<id> contra ESTE
+        // job (permite re-guardar el mismo archivo; rechaza vincular ajenos).
+        await validateJobPrivateRefs(data.notes, ingemUser.userId, id);
         if (data.status) {
           const old = await db.getJobById(id);
           if (old && old.status !== data.status) {
@@ -635,6 +739,8 @@ export const appRouter = router({
           }
         }
         await db.updateJob(id, data);
+        // Sellar la asociación de archivos aún no vinculados a este job.
+        await bindJobPrivateRefs(data.notes, id);
         return { success: true };
       }),
     delete: ingemDeleteProcedure("jobs").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteJob(input.id)),
@@ -748,13 +854,16 @@ export const appRouter = router({
     //  - purchase_order / invoice -> requiere poder EDITAR 'jobs'.
     //  - technician_document      -> requiere poder EDITAR 'technicians'.
     // Un viewer nunca tiene canEdit, así que no puede escribir por acá.
+    // El cliente NO puede declarar entityType/entityId: se ignoran por completo.
+    // El archivo se sube SIN asociar y con dueño (createdBy) tomado del token.
+    // La asociación archivo→job la sella el servidor al crear/editar el trabajo
+    // (validateJobPrivateRefs/bindJobPrivateRefs). Así un cliente no puede
+    // vincular arbitrariamente un archivo a un recurso ajeno.
     upload: ingemProtectedProcedure
       .input(z.object({
         fileName: z.string(),
         fileData: z.string(), // base64 (con o sin prefijo data:)
         category: z.enum(["purchase_order", "invoice", "technician_document"]),
-        entityType: z.string().max(50).optional(),
-        entityId: z.number().int().positive().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const ingemUser = (ctx as any).ingemUser;
@@ -777,9 +886,9 @@ export const appRouter = router({
           sizeBytes: validated.sizeBytes,
           data: validated.buffer,
           category: input.category,
-          entityType: input.entityType ?? null,
-          entityId: input.entityId ?? null,
-          createdBy: ingemUser.userId ?? null,
+          entityType: null, // sin asociar: la sella el servidor al vincular al job
+          entityId: null,
+          createdBy: ingemUser.userId ?? null, // dueño derivado del token, nunca del cliente
         });
         // NO se devuelven los bytes ni ninguna URL pública: sólo el id privado.
         return { privateFileId: inserted.id };
@@ -790,6 +899,16 @@ export const appRouter = router({
     // devuelve el contenido en base64 + el nombre/mime seguros. El cliente arma
     // el Blob y fuerza la descarga como adjunto. No se exponen headers con el
     // nombre crudo del usuario: el nombre ya viene saneado en el servidor.
+    // Autorización de descarga en capas (anti-IDOR). Conocer el id NO alcanza:
+    //  1) gate por categoría → acceso al módulo (con override viewer).
+    //  2) gate de pertenencia:
+    //     - el AUTOR (createdBy) siempre puede descargar su propio archivo
+    //       (cubre la ventana temporal antes de asociarlo a un job);
+    //     - si no es el autor, el archivo DEBE estar asociado a una entidad y el
+    //       usuario debe tener acceso REAL a ESA entidad (se carga el job/técnico
+    //       y se delega en canAccessJob/canAccessTechnician). Un archivo sin
+    //       asociar no lo puede leer nadie más que su autor: enumerar ids no
+    //       filtra contenido.
     download: ingemProtectedProcedure
       .input(z.object({ id: z.number().int().positive() }))
       .query(async ({ input, ctx }) => {
@@ -801,8 +920,29 @@ export const appRouter = router({
         const allowed = ingemUser.allowedModules
           ? safeParseModules(ingemUser.allowedModules)
           : null;
+        // (1) Gate por categoría/módulo.
         if (!canDownloadPrivateCategory(ingemUser.role, allowed, meta.category)) {
           throw new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para ver este archivo." });
+        }
+        // (2) Gate de pertenencia (a menos que sea el autor del archivo).
+        const isOwner = meta.createdBy != null && meta.createdBy === ingemUser.userId;
+        if (!isOwner) {
+          if (meta.entityId == null) {
+            // Archivo sin asociar: sólo el autor puede verlo.
+            throw new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para ver este archivo." });
+          }
+          if (meta.category === "technician_document") {
+            const tech = meta.entityType === "technician" ? await db.getTechnicianById(meta.entityId) : null;
+            if (!tech || !canAccessTechnician(ingemUser.role, allowed, tech)) {
+              throw new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para ver este archivo." });
+            }
+          } else {
+            // purchase_order | invoice → entidad job.
+            const job = meta.entityType === "job" ? await db.getJobById(meta.entityId) : null;
+            if (!job || !canAccessJob(ingemUser.role, allowed, job)) {
+              throw new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para ver este archivo." });
+            }
+          }
         }
         const file = await db.getPrivateFileById(input.id);
         if (!file) {

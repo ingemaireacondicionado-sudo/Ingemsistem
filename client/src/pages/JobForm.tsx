@@ -625,8 +625,6 @@ export function JobForm({ jobs, customers, technicians, products, transactions =
                   onFileUploaded={(ref) => setPurchaseOrderFileUrl(ref)}
                   onFileRemoved={() => setPurchaseOrderFileUrl('')}
                   category="purchase_order"
-                  entityType="job"
-                  entityId={isEditing && id ? Number(id) : undefined}
                 />
               </div>
             )}
@@ -693,8 +691,6 @@ export function JobForm({ jobs, customers, technicians, products, transactions =
                       onFileUploaded={(ref) => setInvoiceFileUrl(ref)}
                       onFileRemoved={() => setInvoiceFileUrl('')}
                       category="invoice"
-                      entityType="job"
-                      entityId={isEditing && id ? Number(id) : undefined}
                     />
                   </div>
                 )}
