@@ -294,6 +294,114 @@ export async function getPrivateFileMetaById(id: number) {
   return rows[0] ?? null;
 }
 
+// Error de asociación archivo→entidad (capa db, desacoplada de tRPC). El router
+// lo mapea a TRPCError con el código correcto.
+export class FileAssocError extends Error {
+  constructor(public code: "BAD_REQUEST" | "FORBIDDEN", message: string) {
+    super(message);
+    this.name = "FileAssocError";
+  }
+}
+
+export type JobFileBinding = { fileId: number; category: "purchase_order" | "invoice" };
+
+// Valida (DENTRO de la transacción, con lock FOR UPDATE) que un archivo se pueda
+// vincular a este job: categoría correcta, no pertenecer a otro job, y —si aún
+// no está asociado— ser del propio usuario. Devuelve la fila bloqueada.
+async function assertBindableInTx(tx: any, b: JobFileBinding, jobId: number, userId: number) {
+  const rows = await tx
+    .select({
+      id: privateFiles.id, category: privateFiles.category,
+      entityType: privateFiles.entityType, entityId: privateFiles.entityId,
+      createdBy: privateFiles.createdBy,
+    })
+    .from(privateFiles)
+    .where(eq(privateFiles.id, b.fileId))
+    .for("update");
+  const f = rows[0];
+  if (!f || f.category !== b.category) {
+    throw new FileAssocError("BAD_REQUEST", "Archivo adjunto inválido.");
+  }
+  const boundToThisJob = f.entityType === "job" && f.entityId === jobId;
+  if (f.entityId != null && !boundToThisJob) {
+    throw new FileAssocError("FORBIDDEN", "El archivo pertenece a otro trabajo.");
+  }
+  if (f.entityId == null && f.createdBy !== userId) {
+    throw new FileAssocError("FORBIDDEN", "No podés adjuntar un archivo que no subiste.");
+  }
+  return f;
+}
+
+/**
+ * Crea un job y ASOCIA sus archivos private:<id> en UNA sola transacción. Si la
+ * validación de pertenencia o el sellado fallan, se hace rollback del job
+ * completo (no quedan estados parciales). El sellado (entityType='job',
+ * entityId=jobId) lo hace el servidor; el cliente nunca lo provee.
+ */
+export async function createJobWithFileBindings(
+  jobData: any,
+  bindings: JobFileBinding[],
+  userId: number,
+): Promise<{ id: number }> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  return db.transaction(async (tx) => {
+    const res = await tx.insert(jobs).values(jobData);
+    const jobId = res[0].insertId;
+    for (const b of bindings) {
+      const f = await assertBindableInTx(tx, b, jobId, userId);
+      if (f.entityId == null) {
+        await tx.update(privateFiles).set({ entityType: "job", entityId: jobId }).where(eq(privateFiles.id, b.fileId));
+      }
+    }
+    return { id: jobId };
+  });
+}
+
+/**
+ * Actualiza un job y RECONCILIA sus archivos private:<id> en la misma
+ * transacción. Cuando `bindings` es null (update sin `notes`) no se tocan las
+ * asociaciones. Cuando es una lista:
+ *  - se vinculan los archivos declarados (validando pertenencia);
+ *  - se DESVINCULAN (se retiran a huérfano: entityType/entityId = NULL, SIN
+ *    borrado físico) los archivos que seguían asociados a este job pero que ya
+ *    NO están referenciados. Así un archivo reemplazado deja de ser descargable
+ *    por acceso al job (queda accesible sólo para su autor, como huérfano).
+ * Cualquier fallo => rollback completo (el job conserva su estado anterior).
+ */
+export async function updateJobWithFileBindings(
+  jobId: number,
+  jobData: any,
+  bindings: JobFileBinding[] | null,
+  userId: number,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.transaction(async (tx) => {
+    await tx.update(jobs).set(jobData).where(eq(jobs.id, jobId));
+    if (bindings === null) return; // update sin `notes`: no reconciliar
+    // 1) Vincular (validando) los archivos declarados.
+    for (const b of bindings) {
+      const f = await assertBindableInTx(tx, b, jobId, userId);
+      if (f.entityId == null) {
+        await tx.update(privateFiles).set({ entityType: "job", entityId: jobId }).where(eq(privateFiles.id, b.fileId));
+      }
+    }
+    // 2) Desvincular los archivos de este job que ya no están referenciados.
+    const keepIds = bindings.map((b) => b.fileId);
+    const current = await tx
+      .select({ id: privateFiles.id })
+      .from(privateFiles)
+      .where(and(eq(privateFiles.entityType, "job"), eq(privateFiles.entityId, jobId)))
+      .for("update");
+    for (const row of current) {
+      if (!keepIds.includes(row.id)) {
+        await tx.update(privateFiles).set({ entityType: null, entityId: null }).where(eq(privateFiles.id, row.id));
+      }
+    }
+  });
+}
+
 // ========== Customers ==========
 export async function getCustomers() {
   const db = await getDb();

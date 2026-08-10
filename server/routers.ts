@@ -99,59 +99,25 @@ function extractJobPrivateRefs(notes: string | undefined | null): {
   return out;
 }
 
-/**
- * Valida y ASOCIA (server-side) las referencias private:<id> de un trabajo.
- * Reglas anti-IDOR al crear/editar un job:
- *  - la categoría del archivo debe coincidir con el slot (OC/factura);
- *  - si el archivo ya está asociado a OTRO job -> se rechaza (no se puede
- *    "robar"/revincular un archivo ajeno);
- *  - si aún no está asociado, sólo su autor (createdBy) puede vincularlo (evita
- *    adjuntar archivos temporales de otros usuarios);
- *  - la asociación (entityType='job', entityId=jobId) la sella el servidor.
- * Idempotente: re-guardar el mismo job con el mismo archivo no falla.
- * Cuando `jobId` es undefined (validación previa a crear el job) sólo se validan
- * categoría/pertenencia; el sellado se hace después con jobId.
- */
-async function validateJobPrivateRefs(
-  notes: string | undefined | null,
-  userId: number,
-  jobId?: number,
-): Promise<void> {
+// Traduce el blob `notes` a la lista de vínculos archivo→job (fileId + categoría
+// esperada) que el job declara. La validación de pertenencia (categoría, autor,
+// no-robar-de-otro-job) y la escritura se hacen ATÓMICAMENTE dentro de la
+// transacción del job (db.createJobWithFileBindings / updateJobWithFileBindings).
+function jobBindingsFromNotes(notes: string | undefined | null): db.JobFileBinding[] {
   const refs = extractJobPrivateRefs(notes);
-  const slots: PrivateCategory[] = ["purchase_order", "invoice"];
-  for (const category of slots) {
-    const id = refs[category as "purchase_order" | "invoice"];
-    if (!id) continue;
-    const meta = await db.getPrivateFileMetaById(id);
-    if (!meta || meta.category !== category) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "Archivo adjunto inválido." });
-    }
-    const alreadyBound = meta.entityId != null;
-    const boundToThisJob = meta.entityType === "job" && meta.entityId === jobId;
-    if (alreadyBound && !boundToThisJob) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "El archivo pertenece a otro trabajo." });
-    }
-    if (!alreadyBound && meta.createdBy !== userId) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "No podés adjuntar un archivo que no subiste." });
-    }
-  }
+  const bindings: db.JobFileBinding[] = [];
+  if (refs.purchase_order) bindings.push({ fileId: refs.purchase_order, category: "purchase_order" });
+  if (refs.invoice) bindings.push({ fileId: refs.invoice, category: "invoice" });
+  return bindings;
 }
 
-// Sella la asociación de los archivos private:<id> de un job (una vez que el job
-// existe y ya se validó la pertenencia con validateJobPrivateRefs).
-async function bindJobPrivateRefs(notes: string | undefined | null, jobId: number): Promise<void> {
-  const refs = extractJobPrivateRefs(notes);
-  const entries: Array<["purchase_order" | "invoice", number | undefined]> = [
-    ["purchase_order", refs.purchase_order],
-    ["invoice", refs.invoice],
-  ];
-  for (const [, id] of entries) {
-    if (!id) continue;
-    const meta = await db.getPrivateFileMetaById(id);
-    if (meta && meta.entityId == null) {
-      await db.setPrivateFileEntity(id, "job", jobId);
-    }
+// Mapea el error de asociación (capa db, desacoplada de tRPC) a un TRPCError con
+// el código correcto para el cliente.
+function throwAsTrpc(e: unknown): never {
+  if (e instanceof db.FileAssocError) {
+    throw new TRPCError({ code: e.code, message: e.message });
   }
+  throw e;
 }
 
 // Helper to generate recurring appointment dates
@@ -692,12 +658,19 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const ingemUser = (ctx as any).ingemUser;
-        // Anti-IDOR: validar la pertenencia de los archivos private:<id> ANTES de
-        // crear el job (no requiere el jobId todavía).
-        await validateJobPrivateRefs(input.notes, ingemUser.userId);
-        const result = await db.createJob(input);
-        // Sellar la asociación archivo→job una vez que el job existe.
-        await bindJobPrivateRefs(input.notes, result.id);
+        // Job + asociación de archivos en UNA sola transacción: si la validación
+        // de pertenencia o el sellado fallan, se hace rollback del job completo
+        // (no quedan estados parciales).
+        let result: { id: number };
+        try {
+          result = await db.createJobWithFileBindings(
+            input,
+            jobBindingsFromNotes(input.notes),
+            ingemUser.userId,
+          );
+        } catch (e) {
+          throwAsTrpc(e);
+        }
         notify.notifyJobCreated({
           jobNumber: input.jobNumber,
           title: input.title,
@@ -723,9 +696,6 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const ingemUser = (ctx as any).ingemUser;
         const { id, ...data } = input;
-        // Anti-IDOR: validar pertenencia de los archivos private:<id> contra ESTE
-        // job (permite re-guardar el mismo archivo; rechaza vincular ajenos).
-        await validateJobPrivateRefs(data.notes, ingemUser.userId, id);
         if (data.status) {
           const old = await db.getJobById(id);
           if (old && old.status !== data.status) {
@@ -738,9 +708,16 @@ export const appRouter = router({
             }).catch(() => {});
           }
         }
-        await db.updateJob(id, data);
-        // Sellar la asociación de archivos aún no vinculados a este job.
-        await bindJobPrivateRefs(data.notes, id);
+        // Si el update trae `notes`, se reconcilian las asociaciones (vincular las
+        // nuevas, DESVINCULAR las que el job ya no referencia) en la misma
+        // transacción que el UPDATE del job. Si `notes` no viene, no se tocan las
+        // asociaciones. bindings=null => no reconciliar.
+        const bindings = data.notes !== undefined ? jobBindingsFromNotes(data.notes) : null;
+        try {
+          await db.updateJobWithFileBindings(id, data, bindings, ingemUser.userId);
+        } catch (e) {
+          throwAsTrpc(e);
+        }
         return { success: true };
       }),
     delete: ingemDeleteProcedure("jobs").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteJob(input.id)),
@@ -924,24 +901,28 @@ export const appRouter = router({
         if (!canDownloadPrivateCategory(ingemUser.role, allowed, meta.category)) {
           throw new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para ver este archivo." });
         }
-        // (2) Gate de pertenencia (a menos que sea el autor del archivo).
-        const isOwner = meta.createdBy != null && meta.createdBy === ingemUser.userId;
-        if (!isOwner) {
-          if (meta.entityId == null) {
-            // Archivo sin asociar: sólo el autor puede verlo.
-            throw new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para ver este archivo." });
+        // (2) Gate de pertenencia. createdBy NO es un bypass permanente:
+        //   A) Archivo SIN asociar (entityId NULL) -> sólo su autor lo ve
+        //      (cubre la ventana temporal antes de vincularlo a un job).
+        //   B) Archivo ASOCIADO -> se IGNORA createdBy y se exige acceso REAL a la
+        //      entidad. Si el autor perdió acceso al módulo/entidad, ya no puede
+        //      descargarlo. Si la entidad no existe, nadie puede.
+        const forbidden = () =>
+          new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para ver este archivo." });
+        if (meta.entityId == null) {
+          if (meta.createdBy == null || meta.createdBy !== ingemUser.userId) {
+            throw forbidden();
           }
-          if (meta.category === "technician_document") {
-            const tech = meta.entityType === "technician" ? await db.getTechnicianById(meta.entityId) : null;
-            if (!tech || !canAccessTechnician(ingemUser.role, allowed, tech)) {
-              throw new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para ver este archivo." });
-            }
-          } else {
-            // purchase_order | invoice → entidad job.
-            const job = meta.entityType === "job" ? await db.getJobById(meta.entityId) : null;
-            if (!job || !canAccessJob(ingemUser.role, allowed, job)) {
-              throw new TRPCError({ code: "FORBIDDEN", message: "No tenés permisos para ver este archivo." });
-            }
+        } else if (meta.category === "technician_document") {
+          const tech = meta.entityType === "technician" ? await db.getTechnicianById(meta.entityId) : null;
+          if (!tech || !canAccessTechnician(ingemUser.role, allowed, tech)) {
+            throw forbidden();
+          }
+        } else {
+          // purchase_order | invoice → entidad job.
+          const job = meta.entityType === "job" ? await db.getJobById(meta.entityId) : null;
+          if (!job || !canAccessJob(ingemUser.role, allowed, job)) {
+            throw forbidden();
           }
         }
         const file = await db.getPrivateFileById(input.id);
