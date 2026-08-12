@@ -12,14 +12,48 @@ import { readStoredMoneyCents, readStoredRate, centsToNumber } from './money';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
-    try {
-      _db = drizzle(process.env.DATABASE_URL);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
+// ===== Barrera de aislamiento de tests (fail-closed) =====
+// Un test NUNCA debe poder conectarse a la DATABASE_URL real (producción),
+// aunque esté presente en el entorno y aunque un mock parcial deje funciones
+// reales expuestas. Durante Vitest la DATABASE_URL de producción se IGNORA por
+// completo; sólo se admite una TEST_DATABASE_URL explícita y distinta.
+function isTestRuntime(): boolean {
+  return (
+    process.env.NODE_ENV === "test" ||
+    process.env.VITEST === "true" ||
+    process.env.VITEST_WORKER_ID !== undefined
+  );
+}
+
+/**
+ * Resuelve la URL de base a usar. En runtime de test se ignora `DATABASE_URL`
+ * (producción) y sólo se permite `TEST_DATABASE_URL` explícita, que NUNCA hace
+ * fallback a `DATABASE_URL`. Si alguien configura la de test igual a la real,
+ * se lanza un error explícito ANTES de crear cualquier conexión. Nunca loguea
+ * la URL. Exportada para poder testear la propia barrera.
+ */
+export function resolveDbUrl(): string | undefined {
+  if (isTestRuntime()) {
+    const testUrl = process.env.TEST_DATABASE_URL;
+    if (!testUrl) return undefined; // fail-closed: sin URL de test → no hay DB
+    if (process.env.DATABASE_URL && testUrl === process.env.DATABASE_URL) {
+      throw new Error("Real database access is disabled during tests");
     }
+    return testUrl;
+  }
+  return process.env.DATABASE_URL;
+}
+
+export async function getDb() {
+  if (_db) return _db;
+  const url = resolveDbUrl();
+  if (!url) return null;
+  try {
+    _db = drizzle(url);
+  } catch {
+    // Nunca se loguea la URL (podría contener credenciales).
+    console.warn("[Database] connection init failed");
+    _db = null;
   }
   return _db;
 }

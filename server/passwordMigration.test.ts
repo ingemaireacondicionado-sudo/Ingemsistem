@@ -57,7 +57,9 @@ vi.mock("drizzle-orm", async (orig) => {
   };
 });
 
-process.env.DATABASE_URL = "mysql://test";
+// URL de test EXPLÍCITA (drizzle mockeado, sin conexión real). No se usa
+// DATABASE_URL: la barrera de aislamiento la ignora durante los tests.
+process.env.TEST_DATABASE_URL = "mysql://test";
 // El dataset del mock reconoce la tabla ingem_users por identidad de referencia.
 store.ingemTable = ingemUsers;
 

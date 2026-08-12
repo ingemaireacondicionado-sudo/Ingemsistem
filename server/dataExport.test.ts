@@ -53,8 +53,10 @@ vi.mock("drizzle-orm/mysql2", () => {
   };
 });
 
-// Necesario para que getDb() entre en la rama que crea la conexión (mockeada).
-process.env.DATABASE_URL = "mysql://test";
+// getDb() usa una URL de test EXPLÍCITA (drizzle está mockeado, no hay conexión
+// real). Se usa TEST_DATABASE_URL, no DATABASE_URL: la barrera de aislamiento
+// ignora la DATABASE_URL real durante los tests.
+process.env.TEST_DATABASE_URL = "mysql://test";
 
 // El backend revalida contra ingem_users: mockeamos getIngemUserById para que
 // los tokens resuelvan a usuarios activos con su rol. exportAllData sigue real
