@@ -1,15 +1,32 @@
 import { describe, expect, it, beforeAll, vi } from "vitest";
+import { hashPassword } from "./passwordUtils";
 
-// El backend revalida contra ingem_users: el token admin (id 1) debe resolver
-// a un usuario admin activo. El resto de db queda real (sin DB → [] o error).
-vi.mock("./db", async (orig) => {
-  const actual = await orig<typeof import("./db")>();
-  return {
-    ...actual,
-    getIngemUserById: async (id: number) =>
-      id === 1 ? { id: 1, name: "Maxi", email: "maxi@ingem.com", role: "admin", isActive: true, allowedModules: null } : undefined,
-  };
-});
+// Mock COMPLETO de ./db en memoria (sin funciones reales de escritura, sin URL,
+// sin leer de producción). El login se valida contra un hash sembrado en el
+// store, NO contra la base real.
+const store = vi.hoisted(() => ({ users: new Map<number, any>(), customers: [] as any[], nextCustomerId: 1 }));
+vi.mock("./db", () => ({
+  getIngemUserById: async (id: number) => store.users.get(id),
+  getIngemUserByEmail: async (email: string) => [...store.users.values()].find(u => u.email === email),
+  getIngemUsers: async () => [...store.users.values()],
+  setIngemUserPasswordHash: async (id: number, h: string) => { const u = store.users.get(id); if (u) u.passwordHash = h; },
+  isLoginBlocked: async () => false,
+  recordLoginFailure: async () => {},
+  clearLoginRateKey: async () => {},
+  cleanupExpiredLoginRateLimits: async () => {},
+  createCustomer: async (data: any) => { const id = store.nextCustomerId++; store.customers.push({ id, ...data }); return { id }; },
+  getCustomers: async () => store.customers.map(c => ({ ...c })),
+  exportAllData: async () => ({
+    exportDate: new Date().toISOString(),
+    customers: [], suppliers: [], products: [], technicians: [],
+    appointments: [], notes: [], transactions: [], jobs: [], ingemUsers: [],
+  }),
+}));
+vi.mock("./notifications", () => ({
+  notifyCustomerCreated: async () => {}, notifyJobCreated: async () => {},
+  notifyJobStatusChanged: async () => {}, notifyAppointmentCreated: async () => {},
+  notifyAppointmentStatusChanged: async () => {}, notifyUrgentNote: async () => {},
+}));
 
 import { appRouter } from "./routers";
 import { generateIngemToken } from "./ingemAuth";
@@ -37,6 +54,9 @@ beforeAll(async () => {
     name: "Maxi",
     role: "admin",
   });
+  // Usuarios sembrados en el store en memoria (login se valida contra estos hashes).
+  store.users.set(1, { id: 1, name: "Maxi", email: "maxi@ingem.com", role: "admin", isActive: true, allowedModules: null, password: null, passwordHash: await hashPassword("Sara2024") });
+  store.users.set(2, { id: 2, name: "Viewer", email: "viewer@ingem.com", role: "viewer", isActive: true, allowedModules: null, password: null, passwordHash: await hashPassword("otra-clave") });
 });
 
 function createAuthenticatedContext(): TrpcContext {

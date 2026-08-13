@@ -1,7 +1,27 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+
+// Mock COMPLETO de ./db en memoria (sin funciones reales de escritura ni URL).
+const store = vi.hoisted(() => ({ appts: [] as any[], nextId: 1 }));
+vi.mock("./db", () => ({
+  getIngemUserById: async (id: number) =>
+    id === 1 ? { id: 1, name: "Maxi", email: "maxi@ingem.com", role: "admin", isActive: true, allowedModules: null } : undefined,
+  createAppointment: async (data: any) => { const id = store.nextId++; store.appts.push({ id, ...data }); return { id }; },
+  getAppointments: async () => store.appts.map(a => ({ ...a })),
+  getAppointmentById: async (id: number) => store.appts.find(a => a.id === id),
+  updateAppointment: async (id: number, data: any) => { const a = store.appts.find(x => x.id === id); if (a) Object.assign(a, data); },
+  deleteAppointment: async (id: number) => { store.appts = store.appts.filter(a => a.id !== id); },
+}));
+vi.mock("./notifications", () => ({
+  notifyAppointmentCreated: async () => {}, notifyAppointmentStatusChanged: async () => {},
+  notifyJobCreated: async () => {}, notifyJobStatusChanged: async () => {},
+  notifyUrgentNote: async () => {}, notifyCustomerCreated: async () => {},
+}));
+
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { generateIngemToken } from "./ingemAuth";
+
+beforeEach(() => { store.appts = []; store.nextId = 1; });
 
 function createAuthenticatedContext(token: string): TrpcContext {
   return {

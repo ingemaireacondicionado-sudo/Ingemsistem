@@ -1,4 +1,23 @@
-import { describe, expect, it, beforeAll } from "vitest";
+import { describe, expect, it, beforeAll, vi } from "vitest";
+
+// Mock COMPLETO de ./db en memoria (sin funciones reales de escritura ni URL) y
+// de ./notifications (no-op). Se verifica que los triggers de notificación NO
+// rompen las mutaciones del router.
+const store = vi.hoisted(() => ({ nextId: 1 }));
+vi.mock("./db", () => ({
+  getIngemUserById: async (id: number) =>
+    id === 1 ? { id: 1, name: "Maxi", email: "maxi@ingem.com", role: "admin", isActive: true, allowedModules: null } : undefined,
+  createCustomer: async () => ({ id: store.nextId++ }),
+  createJobWithFileBindings: async () => ({ id: store.nextId++ }),
+  createAppointment: async () => ({ id: store.nextId++ }),
+  createNote: async () => ({ id: store.nextId++ }),
+}));
+vi.mock("./notifications", () => ({
+  notifyCustomerCreated: async () => {}, notifyJobCreated: async () => {},
+  notifyJobStatusChanged: async () => {}, notifyAppointmentCreated: async () => {},
+  notifyAppointmentStatusChanged: async () => {}, notifyUrgentNote: async () => {},
+}));
+
 import { appRouter } from "./routers";
 import { generateIngemToken } from "./ingemAuth";
 import type { TrpcContext } from "./_core/context";

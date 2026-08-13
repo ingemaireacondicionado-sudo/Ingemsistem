@@ -17,18 +17,21 @@ const store = vi.hoisted(() => ({
 
 const snap = (m: Map<number, any>) => new Map([...m].map(([k, v]) => [k, { ...v }]));
 
+// Mock COMPLETO (sin ...actual): sólo se re-expone la clase de error (valor puro,
+// no toca DB); ninguna función real de ./db queda expuesta.
 vi.mock("./db", async (orig) => {
   const actual = await orig<typeof import("./db")>();
+  const FileAssocError = actual.FileAssocError;
   const validateBinding = (b: any, jobId: number, userId: number) => {
     const f = store.files.get(b.fileId);
-    if (!f || f.category !== b.category) throw new actual.FileAssocError("BAD_REQUEST", "Archivo adjunto inválido.");
+    if (!f || f.category !== b.category) throw new FileAssocError("BAD_REQUEST", "Archivo adjunto inválido.");
     const boundToThisJob = f.entityType === "job" && f.entityId === jobId;
-    if (f.entityId != null && !boundToThisJob) throw new actual.FileAssocError("FORBIDDEN", "El archivo pertenece a otro trabajo.");
-    if (f.entityId == null && f.createdBy !== userId) throw new actual.FileAssocError("FORBIDDEN", "No podés adjuntar un archivo que no subiste.");
+    if (f.entityId != null && !boundToThisJob) throw new FileAssocError("FORBIDDEN", "El archivo pertenece a otro trabajo.");
+    if (f.entityId == null && f.createdBy !== userId) throw new FileAssocError("FORBIDDEN", "No podés adjuntar un archivo que no subiste.");
     return f;
   };
   return {
-    ...actual,
+    FileAssocError,
     getIngemUserById: async (id: number) => store.users.get(id) ?? null,
     insertPrivateFile: async (data: any) => {
       const id = store.nextFileId++;

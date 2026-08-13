@@ -14,10 +14,9 @@ const store = vi.hoisted(() => ({
   nextJobId: 1,
 }));
 
-vi.mock("./db", async (orig) => {
-  const actual = await orig<typeof import("./db")>();
+// Mock COMPLETO (sin ...actual): no expone ninguna función real de ./db.
+vi.mock("./db", () => {
   return {
-    ...actual,
     getIngemUserById: async (id: number) => store.users.get(id) ?? null,
     createNote: async (data: any) => {
       const id = store.nextNoteId++;

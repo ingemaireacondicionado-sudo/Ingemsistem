@@ -17,8 +17,11 @@ const store = vi.hoisted(() => ({
 
 vi.mock("./db", async (orig) => {
   const actual = await orig<typeof import("./db")>();
+  // Mock COMPLETO: sólo se re-exponen valores puros (clase de error + constantes),
+  // ninguna función real de ./db queda expuesta.
   return {
-    ...actual,
+    PaymentError: actual.PaymentError,
+    PAYMENT_ERR: actual.PAYMENT_ERR,
     getIngemUserById: async (id: number) => store.users.get(id) ?? null,
     registerJobPaymentAtomic: async (params: any): Promise<import("./db").RegisterPaymentResult> => {
       const job = store.jobs.get(params.jobId);

@@ -1,11 +1,12 @@
-// Setup global de Vitest (setupFiles). Capa EXTRA de aislamiento además de la
-// barrera fail-closed de getDb(): elimina cualquier DATABASE_URL de producción
-// heredada del entorno (p. ej. inyectada por Manus) antes de que corra cualquier
-// test. Los tests que necesitan una DB (mockeada) usan TEST_DATABASE_URL, que
-// jamás hace fallback a DATABASE_URL.
+// Setup global de Vitest (setupFiles). Capa EXTRA de aislamiento — la seguridad
+// PRINCIPAL vive en server/db.ts (resolveDbUrl es fail-closed en runtime de
+// test). Aun así, se eliminan del entorno cualquier URL de base heredada
+// (p. ej. inyectada por Manus) antes de correr cualquier test.
 //
-// No es la única defensa: aunque este archivo no corriera, getDb() ignora
-// DATABASE_URL cuando NODE_ENV=test / VITEST. Es defensa en profundidad.
+// No es la única defensa: aunque este archivo no corriera, getDb() devuelve
+// null durante Vitest ignorando DATABASE_URL y TEST_DATABASE_URL. Defensa en
+// profundidad.
 if (process.env.NODE_ENV === "test" || process.env.VITEST) {
   delete process.env.DATABASE_URL;
+  delete process.env.TEST_DATABASE_URL;
 }

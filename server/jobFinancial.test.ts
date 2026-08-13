@@ -23,10 +23,9 @@ const pm = (n: unknown): Record<string, any> => {
 };
 const snap = (m: Map<number, any>) => new Map([...m].map(([k, v]) => [k, { ...v }]));
 
-vi.mock("./db", async (orig) => {
-  const actual = await orig<typeof import("./db")>();
+// Mock COMPLETO (sin ...actual): no expone ninguna función real de ./db.
+vi.mock("./db", () => {
   return {
-    ...actual,
     getIngemUserById: async (id: number) => store.users.get(id) ?? null,
     insertPrivateFile: async (data: any) => {
       const id = store.nextFileId++;

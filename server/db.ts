@@ -26,21 +26,16 @@ function isTestRuntime(): boolean {
 }
 
 /**
- * Resuelve la URL de base a usar. En runtime de test se ignora `DATABASE_URL`
- * (producción) y sólo se permite `TEST_DATABASE_URL` explícita, que NUNCA hace
- * fallback a `DATABASE_URL`. Si alguien configura la de test igual a la real,
- * se lanza un error explícito ANTES de crear cualquier conexión. Nunca loguea
- * la URL. Exportada para poder testear la propia barrera.
+ * Resuelve la URL de base a usar. Regla ESTRICTA fail-closed: durante Vitest
+ * NUNCA se abre una conexión real — se ignoran por completo `DATABASE_URL` Y
+ * `TEST_DATABASE_URL` (y cualquier otra). La suite unitaria siempre corre con
+ * getDb()=null. Si en el futuro hicieran falta tests de integración con una DB
+ * real, deberán usar OTRA configuración/comando explícito, separado de la suite
+ * unitaria (no habilitado acá). Nunca loguea la URL. Exportada para testear la
+ * propia barrera.
  */
 export function resolveDbUrl(): string | undefined {
-  if (isTestRuntime()) {
-    const testUrl = process.env.TEST_DATABASE_URL;
-    if (!testUrl) return undefined; // fail-closed: sin URL de test → no hay DB
-    if (process.env.DATABASE_URL && testUrl === process.env.DATABASE_URL) {
-      throw new Error("Real database access is disabled during tests");
-    }
-    return testUrl;
-  }
+  if (isTestRuntime()) return undefined; // Vitest ⇒ CERO conexión real, sin excepción.
   return process.env.DATABASE_URL;
 }
 
@@ -952,8 +947,11 @@ export async function getNextBudgetNumber(): Promise<string> {
 // proveen las credenciales por variables de entorno. Nunca guarda contraseñas
 // en texto plano ni usa credenciales hardcodeadas. Si falta la contraseña, el
 // seed se deshabilita de forma segura (no crea ningún usuario).
-export async function seedIngemUsers() {
-  const db = await getDb();
+// `dbClient` es una inyección SOLO para tests (permite ejercitar la lógica real
+// con un doble en memoria, sin URL ni conexión). En producción se llama sin
+// argumentos y usa getDb() como siempre: comportamiento idéntico.
+export async function seedIngemUsers(dbClient?: any) {
+  const db = dbClient ?? await getDb();
   if (!db) return;
 
   const email = process.env.INGEM_SEED_ADMIN_EMAIL;
@@ -978,8 +976,10 @@ export async function seedIngemUsers() {
 }
 
 // ========== Export all data (for Google Drive backup) ==========
-export async function exportAllData() {
-  const db = await getDb();
+// `dbClient` es una inyección SOLO para tests (misma semántica que seedIngemUsers).
+// En producción se llama sin argumentos: comportamiento idéntico.
+export async function exportAllData(dbClient?: any) {
+  const db = dbClient ?? await getDb();
   if (!db) return null;
   const [allCustomers, allSuppliers, allProducts, allTechnicians, allAppointments, allNotes, allTransactions, allJobs, allIngemUsers] = await Promise.all([
     db.select().from(customers),
@@ -994,7 +994,7 @@ export async function exportAllData() {
   ]);
   // Nunca exportar datos de autenticación (password/passwordHash/tokens/secretos).
   // Solo se incluye información administrativa necesaria de cada usuario.
-  const safeIngemUsers = allIngemUsers.map(u => ({
+  const safeIngemUsers = allIngemUsers.map((u: any) => ({
     id: u.id,
     name: u.name,
     email: u.email,
