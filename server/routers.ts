@@ -124,6 +124,10 @@ function parseJobMeta(notes: string | undefined | null): Record<string, unknown>
   }
 }
 
+// 8B-5a: mensaje funcional al intentar editar/eliminar un cobro del ledger.
+const PROTECTED_PAYMENT_MSG =
+  "Este movimiento es un cobro registrado del sistema y no puede editarse ni eliminarse manualmente.";
+
 // Mapea el error de asociación (capa db, desacoplada de tRPC) a un TRPCError con
 // el código correcto para el cliente.
 function throwAsTrpc(e: unknown): never {
@@ -651,7 +655,13 @@ export const appRouter = router({
         relatedJobId: z.number().nullable().default(null),
         notes: z.string().default(""),
       }))
-      .mutation(async ({ input }) => db.createTransaction(input)),
+      .mutation(async ({ input }) => {
+        // 8B-5a: isJobPayment es SERVER-CONTROLLED. Una transaction manual NUNCA
+        // puede declararse cobro de trabajo; se fuerza a false (aunque el cliente
+        // lo enviara, el input Zod ya no lo acepta). El marcado sólo lo hará
+        // registerPayment en 8B-5c.
+        return db.createTransaction({ ...input, isJobPayment: false });
+      }),
     update: ingemEditProcedure("transactions")
       .input(z.object({
         id: z.number(), type: z.enum(["income", "expense"]).optional(), category: z.string().optional(),
@@ -666,8 +676,29 @@ export const appRouter = router({
         relatedJobId: z.number().nullable().optional(),
         notes: z.string().optional(),
       }))
-      .mutation(async ({ input }) => { const { id, ...data } = input; await db.updateTransaction(id, data); return { success: true }; }),
-    delete: ingemDeleteProcedure("transactions").input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTransaction(input.id)),
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        // 8B-5a: un cobro del ledger (isJobPayment=true) NO puede editarse por el
+        // CRUD genérico (protege amount/relatedJobId/type/category/status/etc.).
+        // La reversión tendrá su propio procedure atómico y auditable (fuera de 8B-5a).
+        const existing = await db.getTransactionById(id);
+        if (existing?.isJobPayment) {
+          throw new TRPCError({ code: "FORBIDDEN", message: PROTECTED_PAYMENT_MSG });
+        }
+        // isJobPayment nunca se toca desde acá (el input Zod no lo acepta).
+        await db.updateTransaction(id, data);
+        return { success: true };
+      }),
+    delete: ingemDeleteProcedure("transactions")
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        // 8B-5a: un cobro del ledger no puede eliminarse por el CRUD genérico.
+        const existing = await db.getTransactionById(input.id);
+        if (existing?.isJobPayment) {
+          throw new TRPCError({ code: "FORBIDDEN", message: PROTECTED_PAYMENT_MSG });
+        }
+        return db.deleteTransaction(input.id);
+      }),
   }),
 
   // ========== Jobs ==========

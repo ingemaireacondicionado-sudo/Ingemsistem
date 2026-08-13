@@ -265,6 +265,12 @@ export const transactions = mysqlTable("transactions", {
   cuitComprador: varchar("cuitComprador", { length: 20 }).default(""),
   cuitVendedor: varchar("cuitVendedor", { length: 20 }).default(""),
   relatedJobId: int("relatedJobId"),
+  // 8B-5: marca SERVER-CONTROLLED de "cobro de trabajo" del ledger canónico.
+  // Sólo registerPayment (8B-5c) podrá ponerla en true; el CRUD genérico la fuerza
+  // a false y no puede editar/eliminar filas marcadas. Las transactions históricas
+  // quedan en false (no se reinterpretan). Default false para no tocar filas
+  // existentes al migrar.
+  isJobPayment: mysqlBoolean("isJobPayment").default(false).notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -292,6 +298,11 @@ export const jobs = mysqlTable("jobs", {
   invoiceAmount: decimal("invoiceAmount", { precision: 12, scale: 2 }).default("0"),
   purchaseOrder: varchar("purchaseOrder", { length: 50 }).default(""),
   paymentStatus: varchar("paymentStatus", { length: 50 }).default("pending"),
+  // 8B-5: base de cobro heredada, SERVER-CONTROLLED. NULL = job aún NO migrado al
+  // modelo canónico (transición). Se congelará una única vez en el cutover (8B-5c)
+  // = amountPaid válido actual. No la controla el cliente ni el CRUD genérico.
+  // Nullable a propósito y sin default (todos los jobs existentes quedan NULL).
+  legacyPaidBase: decimal("legacyPaidBase", { precision: 12, scale: 2 }),
   startDate: varchar("startDate", { length: 20 }).default(""),
   endDate: varchar("endDate", { length: 20 }).default(""),
   notes: text("notes"),
