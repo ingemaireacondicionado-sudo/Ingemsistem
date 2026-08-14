@@ -8,7 +8,7 @@ import {
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { hashPassword } from './passwordUtils';
-import { readStoredMoneyCents, readExactStoredMoneyCents, readStoredRate, centsToNumber, centsToDecimalString } from './money';
+import { readStoredMoneyCents, readExactStoredMoneyCents, readStoredRate, centsToNumber, centsToDecimalString, MAX_AMOUNT_CENTS } from './money';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -372,11 +372,14 @@ export async function createJobWithFileBindings(
   jobData: any,
   bindings: JobFileBinding[],
   userId: number,
+  injectedDb?: any,
 ): Promise<{ id: number }> {
-  const db = await getDb();
+  const db = injectedDb ?? await getDb();
   if (!db) throw new Error("DB not available");
-  return db.transaction(async (tx) => {
-    const res = await tx.insert(jobs).values(jobData);
+  return db.transaction(async (tx: any) => {
+    // Defensa en profundidad (8B-5c): la base canónica se fija server-side a 0.00
+    // en la creación, sin importar lo que traiga jobData (el cliente no la decide).
+    const res = await tx.insert(jobs).values({ ...jobData, legacyPaidBase: "0.00" });
     const jobId = res[0].insertId;
     for (const b of bindings) {
       const f = await assertBindableInTx(tx, b, jobId, userId);
@@ -424,13 +427,14 @@ export async function updateJobWithFileBindings(
   jobData: any,
   bindings: JobFileBinding[] | null,
   userId: number,
+  injectedDb?: any,
 ): Promise<void> {
-  const db = await getDb();
+  const db = injectedDb ?? await getDb();
   if (!db) throw new Error("DB not available");
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: any) => {
     // 1) Bloquear la fila y leer el estado financiero protegido VIGENTE.
     const lockedRows = await tx
-      .select({ notes: jobs.notes, paymentStatus: jobs.paymentStatus })
+      .select({ notes: jobs.notes, paymentStatus: jobs.paymentStatus, legacyPaidBase: jobs.legacyPaidBase })
       .from(jobs)
       .where(eq(jobs.id, jobId))
       .for("update");
@@ -439,6 +443,9 @@ export async function updateJobWithFileBindings(
     // 2) Construir el payload preservando amountPaid/paymentStatus desde la fila
     //    bloqueada (no desde una lectura previa fuera de la transacción).
     const finalData: any = { ...jobData };
+    // Defensa en profundidad (8B-5c): legacyPaidBase NUNCA se modifica por el CRUD
+    // genérico (sólo la congela el cutover). Se descarta lo que venga en jobData.
+    delete finalData.legacyPaidBase;
     // paymentStatus: siempre el de la DB; el cliente nunca lo controla por acá.
     finalData.paymentStatus = locked ? locked.paymentStatus : undefined;
     if (finalData.paymentStatus === undefined) delete finalData.paymentStatus;
@@ -448,6 +455,34 @@ export async function updateJobWithFileBindings(
       const newMeta = parseMetaObject(finalData.notes);
       if ("amountPaid" in lockedMeta) newMeta.amountPaid = lockedMeta.amountPaid;
       else delete newMeta.amountPaid; // legacy sin amountPaid: no se inventa (equivale a 0)
+
+      // BLINDAJE DE MONEDA (8B-5c): no se puede cambiar `currency` si el job ya
+      // tiene historia financiera. legacyPaidBase es un DECIMAL SIN moneda: su
+      // divisa es implícitamente `notes.currency` al momento de congelar. Un
+      // cobro marcado tampoco guarda moneda propia. Por eso, con saldo/cobros ya
+      // registrados, permitir ARS↔USD corrompería en silencio el significado del
+      // dinero. Se bloquea, bajo el MISMO lock, comparando la moneda vigente.
+      const oldCurrency = typeof lockedMeta.currency === "string" ? lockedMeta.currency : "ARS";
+      const newCurrency = typeof newMeta.currency === "string" ? newMeta.currency : "ARS";
+      if (newCurrency !== oldCurrency) {
+        // ¿Hay historia financiera? base congelada > 0, cobro legacy > 0 (base aún
+        // NULL), o algún cobro marcado. Ilegible/ambiguo ⇒ fail-closed (bloquear).
+        let paidCents: number | null;
+        if (locked?.legacyPaidBase !== null && locked?.legacyPaidBase !== undefined) {
+          const b = readExactStoredMoneyCents(locked.legacyPaidBase);
+          paidCents = b.ok ? b.cents : null;
+        } else {
+          const legacy = readExactStoredMoneyCents(lockedMeta.amountPaid);
+          paidCents = legacy.ok ? legacy.cents : null;
+        }
+        const marks = await tx
+          .select({ id: transactions.id })
+          .from(transactions)
+          .where(and(eq(transactions.relatedJobId, jobId), eq(transactions.isJobPayment, true)));
+        const hasHistory = marks.length > 0 || paidCents === null || paidCents > 0;
+        if (hasHistory) throw new PaymentError("FORBIDDEN", PAYMENT_ERR.CURRENCY_LOCKED);
+      }
+
       finalData.notes = JSON.stringify(newMeta);
     }
 
@@ -704,22 +739,44 @@ export async function getTransactionById(id: number) {
   return result[0];
 }
 
-export async function createTransaction(data: any) {
-  const db = await getDb();
+export async function createTransaction(data: any, injectedDb?: any) {
+  const db = injectedDb ?? await getDb();
   if (!db) throw new Error("DB not available");
-  const result = await db.insert(transactions).values(data);
+  // Defensa en profundidad (8B-5c): el CRUD genérico NUNCA marca un cobro del
+  // ledger. isJobPayment sólo lo pone registerJobPaymentAtomic (que inserta
+  // directo, sin pasar por acá). Se fuerza a false aunque el llamador mande true.
+  const { isJobPayment: _ignored, ...rest } = data ?? {};
+  const result = await db.insert(transactions).values({ ...rest, isJobPayment: false });
   return { id: result[0].insertId };
 }
 
-export async function updateTransaction(id: number, data: any) {
-  const db = await getDb();
+export async function updateTransaction(id: number, data: any, injectedDb?: any) {
+  const db = injectedDb ?? await getDb();
   if (!db) throw new Error("DB not available");
-  await db.update(transactions).set(data).where(eq(transactions.id, id));
+  // Defensa en profundidad (8B-5c): un cobro marcado del ledger es INMUTABLE por
+  // el CRUD genérico, y isJobPayment nunca se modifica desde acá. La garantía no
+  // depende sólo del router.
+  const existing = await db
+    .select({ isJobPayment: transactions.isJobPayment })
+    .from(transactions)
+    .where(eq(transactions.id, id))
+    .limit(1);
+  if (existing[0]?.isJobPayment) throw new PaymentError("FORBIDDEN", PAYMENT_ERR.PROTECTED);
+  const { isJobPayment: _ignored, ...rest } = data ?? {};
+  await db.update(transactions).set(rest).where(eq(transactions.id, id));
 }
 
-export async function deleteTransaction(id: number) {
-  const db = await getDb();
+export async function deleteTransaction(id: number, injectedDb?: any) {
+  const db = injectedDb ?? await getDb();
   if (!db) throw new Error("DB not available");
+  // Defensa en profundidad (8B-5c): un cobro marcado del ledger no puede borrarse
+  // por el CRUD genérico (la reversión tendrá su propio procedure auditable).
+  const existing = await db
+    .select({ isJobPayment: transactions.isJobPayment })
+    .from(transactions)
+    .where(eq(transactions.id, id))
+    .limit(1);
+  if (existing[0]?.isJobPayment) throw new PaymentError("FORBIDDEN", PAYMENT_ERR.PROTECTED);
   await db.delete(transactions).where(eq(transactions.id, id));
 }
 
@@ -737,17 +794,22 @@ export async function getJobById(id: number) {
   return result[0];
 }
 
-export async function createJob(data: any) {
-  const db = await getDb();
+export async function createJob(data: any, injectedDb?: any) {
+  const db = injectedDb ?? await getDb();
   if (!db) throw new Error("DB not available");
-  const result = await db.insert(jobs).values(data);
+  // Defensa en profundidad (8B-5c): todo job de negocio nace canónico con base
+  // 0.00 server-side, cualquiera sea el llamador. El cliente nunca la decide.
+  const result = await db.insert(jobs).values({ ...data, legacyPaidBase: "0.00" });
   return { id: result[0].insertId };
 }
 
-export async function updateJob(id: number, data: any) {
-  const db = await getDb();
+export async function updateJob(id: number, data: any, injectedDb?: any) {
+  const db = injectedDb ?? await getDb();
   if (!db) throw new Error("DB not available");
-  await db.update(jobs).set(data).where(eq(jobs.id, id));
+  // Defensa en profundidad (8B-5c): el CRUD genérico NUNCA modifica legacyPaidBase
+  // (sólo el cutover dentro de registerJobPaymentAtomic la congela).
+  const { legacyPaidBase: _ignored, ...rest } = data ?? {};
+  await db.update(jobs).set(rest).where(eq(jobs.id, id));
 }
 
 export async function deleteJob(id: number) {
@@ -761,7 +823,7 @@ export async function deleteJob(id: number) {
 // Error funcional del flujo de cobro. El router lo mapea a TRPCError con el
 // código correcto. Los mensajes son de negocio (nunca exponen SQL/stack).
 export class PaymentError extends Error {
-  constructor(public code: "BAD_REQUEST" | "NOT_FOUND", message: string) {
+  constructor(public code: "BAD_REQUEST" | "NOT_FOUND" | "FORBIDDEN", message: string) {
     super(message);
     this.name = "PaymentError";
   }
@@ -779,6 +841,14 @@ export const PAYMENT_ERR = {
   // legítimos (p. ej. los históricos con exceso de precisión) se resuelven con la
   // migración controlada de legacyPaidBase (8B-5d), no por el cutover perezoso.
   CUTOVER_REVIEW: "El monto ya cobrado de este trabajo no puede migrarse automáticamente (precisión inesperada o dato ilegible). Requiere revisión y migración manual de la base antes de registrar cobros.",
+  // 8B-5c fail-closed: el ledger canónico tiene un cobro marcado con importe
+  // corrupto (0, negativo, ambiguo, ilegible o fuera de rango) o la suma acumulada
+  // desborda el límite monetario. No se puede calcular el saldo con seguridad.
+  LEDGER_CORRUPT: "El ledger de cobros del trabajo tiene un movimiento inválido o un total fuera de rango. Requiere revisión antes de registrar nuevos cobros.",
+  // 8B-5a/5c: intento de editar/eliminar un cobro del ledger, o de cambiar la
+  // moneda de un trabajo con historia financiera, por el CRUD genérico.
+  PROTECTED: "Este movimiento es un cobro registrado del sistema y no puede editarse ni eliminarse manualmente.",
+  CURRENCY_LOCKED: "No se puede cambiar la moneda de un trabajo que ya tiene cobros o saldo registrado.",
 } as const;
 
 export type RegisterPaymentResult = {
@@ -813,12 +883,19 @@ async function sumMarkedJobPaymentsCents(tx: any, jobId: number): Promise<number
     .where(and(eq(transactions.relatedJobId, jobId), eq(transactions.isJobPayment, true)));
   let total = 0;
   for (const r of rows) {
-    const c = readStoredMoneyCents(r.amount);
-    // Un cobro marcado con importe ilegible es una corrupción del ledger canónico
-    // (no debería existir: registerPayment sólo inserta importes validados). Fail
-    // closed: aborta el cobro en vez de sumar de más/menos silenciosamente.
-    if (c === null) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
-    total += c;
+    // Todo cobro marcado DEBE tener un importe EXACTO y ESTRICTAMENTE > 0. Cualquier
+    // corrupción (0, negativo, ambiguo/exceso de precisión, ilegible o fuera de
+    // DECIMAL(12,2)) es un ledger inválido. Fail-closed: aborta el cobro (ROLLBACK)
+    // en vez de sumar de más/menos o redondear. registerPayment sólo inserta
+    // importes validados, así que esto sólo dispara ante datos corruptos.
+    const c = readExactStoredMoneyCents(r.amount);
+    if (!c.ok || c.cents <= 0) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.LEDGER_CORRUPT);
+    total += c.cents;
+    // Overflow ACUMULADO: aunque cada fila sea válida, la suma no puede exceder el
+    // límite monetario ni salir del rango de entero seguro.
+    if (!Number.isSafeInteger(total) || total > MAX_AMOUNT_CENTS) {
+      throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.LEDGER_CORRUPT);
+    }
   }
   return total;
 }
@@ -924,12 +1001,22 @@ export async function registerJobPaymentAtomic(params: {
     const markedCents = await sumMarkedJobPaymentsCents(tx, params.jobId);
 
     // 7) paidBefore CANÓNICO. NUNCA se usa el cache amountPaid para validar el saldo.
+    //    Overflow ACUMULADO: base + marcados debe seguir dentro del rango monetario
+    //    y de entero seguro, aunque cada componente sea individualmente válido.
     const paidBeforeCents = baseCents + markedCents;
+    if (!Number.isSafeInteger(paidBeforeCents) || paidBeforeCents > MAX_AMOUNT_CENTS) {
+      throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.LEDGER_CORRUPT);
+    }
     const balanceCents = totalCents - paidBeforeCents;
     if (balanceCents <= 0) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.ALREADY_PAID);
     if (params.amountCents > balanceCents) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.OVER_BALANCE);
 
+    // paidBefore + nuevo cobro: defensa adicional de overflow (con no-overpay ya
+    // queda acotado por total, pero se verifica explícitamente igual, fail-closed).
     const paidAfterCents = paidBeforeCents + params.amountCents;
+    if (!Number.isSafeInteger(paidAfterCents) || paidAfterCents > MAX_AMOUNT_CENTS) {
+      throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.LEDGER_CORRUPT);
+    }
     const isFullyPaid = paidAfterCents >= totalCents; // con no-overpay ⇒ === total
     const newStatus = isFullyPaid ? "collected" : job.status;
     const newPaymentStatus = isFullyPaid ? "completed" : "partial";

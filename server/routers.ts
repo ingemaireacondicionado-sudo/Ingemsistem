@@ -124,14 +124,21 @@ function parseJobMeta(notes: string | undefined | null): Record<string, unknown>
   }
 }
 
-// 8B-5a: mensaje funcional al intentar editar/eliminar un cobro del ledger.
+// 8B-5a: mensaje funcional al intentar editar/eliminar un cobro del ledger. Debe
+// coincidir EXACTAMENTE con db.PAYMENT_ERR.PROTECTED (mismo texto reutilizado por
+// los guards DB/domain de 8B-5c). Se mantiene como literal —y no como referencia a
+// db.*— para no romper los tests que mockean el módulo ./db por completo.
 const PROTECTED_PAYMENT_MSG =
   "Este movimiento es un cobro registrado del sistema y no puede editarse ni eliminarse manualmente.";
 
-// Mapea el error de asociación (capa db, desacoplada de tRPC) a un TRPCError con
-// el código correcto para el cliente.
+// Mapea errores funcionales de la capa db (desacoplada de tRPC) a TRPCError con el
+// código correcto. Incluye los guards DB/domain de 8B-5c (PaymentError con código
+// BAD_REQUEST | NOT_FOUND | FORBIDDEN), no sólo los de asociación de archivos.
 function throwAsTrpc(e: unknown): never {
   if (e instanceof db.FileAssocError) {
+    throw new TRPCError({ code: e.code, message: e.message });
+  }
+  if (e instanceof db.PaymentError) {
     throw new TRPCError({ code: e.code, message: e.message });
   }
   throw e;
@@ -685,8 +692,13 @@ export const appRouter = router({
         if (existing?.isJobPayment) {
           throw new TRPCError({ code: "FORBIDDEN", message: PROTECTED_PAYMENT_MSG });
         }
-        // isJobPayment nunca se toca desde acá (el input Zod no lo acepta).
-        await db.updateTransaction(id, data);
+        // isJobPayment nunca se toca desde acá (el input Zod no lo acepta). El guard
+        // DB/domain de updateTransaction es el respaldo (mapeado vía throwAsTrpc).
+        try {
+          await db.updateTransaction(id, data);
+        } catch (e) {
+          throwAsTrpc(e);
+        }
         return { success: true };
       }),
     delete: ingemDeleteProcedure("transactions")
@@ -697,7 +709,12 @@ export const appRouter = router({
         if (existing?.isJobPayment) {
           throw new TRPCError({ code: "FORBIDDEN", message: PROTECTED_PAYMENT_MSG });
         }
-        return db.deleteTransaction(input.id);
+        // Guard DB/domain de deleteTransaction como respaldo (mapeado a TRPCError).
+        try {
+          return await db.deleteTransaction(input.id);
+        } catch (e) {
+          throwAsTrpc(e);
+        }
       }),
   }),
 

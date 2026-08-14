@@ -369,3 +369,88 @@ describe("8B-5c — concurrencia bajo lock (serializada) sin doble conteo", () =
     expect(cacheOf(store, 22)).toBe(6000 + 9000); // 15000, no 6000+10000+…
   });
 });
+
+// ---- Cobros marcados corruptos (fail-closed en el SUM canónico) --------------
+
+// Inserta un cobro MARCADO (isJobPayment=true) directo en el store, para simular
+// un ledger corrupto que registerPayment jamás produciría por sí mismo.
+function seedMarked(store: Store, jobId: number, amount: unknown) {
+  const id = store.nextTxId++;
+  store.transactions.set(id, {
+    id, type: "income", category: "Cobro de trabajo", status: "completed",
+    relatedJobId: jobId, amount, isJobPayment: true,
+  });
+  return id;
+}
+
+describe("8B-5c — cobro marcado corrupto ⇒ FAIL CLOSED (LEDGER_CORRUPT)", () => {
+  // Cada caso: un cobro marcado con importe inválido debe abortar el nuevo cobro
+  // (ROLLBACK total): no se inserta nada, ni se toca amountPaid/legacyPaidBase.
+  const corruptCases: Array<[string, unknown]> = [
+    ["amount = 0", "0"],
+    ["amount = 0.00", "0.00"],
+    ["amount negativo", "-100"],
+    ["amount no numérico", "abc"],
+    ["amount vacío", ""],
+    ["más precisión de la permitida", "100.005"],
+    ["fuera de DECIMAL(12,2)", "10000000000"], // 1e10 → 1e12 centavos > MAX
+    ["amount null", null],
+  ];
+  for (const [label, bad] of corruptCases) {
+    it(`rechaza y no escribe nada: ${label}`, async () => {
+      seedJob(store, 30, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+      seedMarked(store, 30, bad);
+      const txCountBefore = store.transactions.size;
+      const cacheBefore = cacheOf(store, 30);
+      await expect(pay(store, 30, 1000_00)).rejects.toThrow(PAYMENT_ERR.LEDGER_CORRUPT);
+      // no se registró nuevo cobro
+      expect(store.transactions.size).toBe(txCountBefore);
+      // amountPaid (cache) y legacyPaidBase intactos
+      expect(cacheOf(store, 30)).toBe(cacheBefore);
+      expect(store.jobs.get(30).legacyPaidBase).toBe("0.00");
+    });
+  }
+});
+
+describe("8B-5c — OVERFLOW ACUMULADO ⇒ FAIL CLOSED (cada fila válida, la suma no)", () => {
+  it("SUM de marcados individualmente válidos pero cuyo total desborda DECIMAL(12,2)", async () => {
+    seedJob(store, 40, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+    // Dos cobros marcados, cada uno = máximo de DECIMAL(12,2). Individualmente
+    // válidos; su suma (≈2e12 centavos) excede el límite → LEDGER_CORRUPT.
+    seedMarked(store, 40, "9999999999.99");
+    seedMarked(store, 40, "9999999999.99");
+    const before = store.transactions.size;
+    await expect(pay(store, 40, 1_00)).rejects.toThrow(PAYMENT_ERR.LEDGER_CORRUPT);
+    expect(store.transactions.size).toBe(before);
+    expect(store.jobs.get(40).legacyPaidBase).toBe("0.00");
+  });
+
+  it("base + SUM(marcados): base válida y marcado válido, pero la suma acumulada desborda", async () => {
+    // base = máximo; un solo marcado de 1 centavo → base+marcados > MAX.
+    seedJob(store, 41, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "9999999999.99" });
+    seedMarked(store, 41, "0.01");
+    const before = store.transactions.size;
+    await expect(pay(store, 41, 1_00)).rejects.toThrow(PAYMENT_ERR.LEDGER_CORRUPT);
+    expect(store.transactions.size).toBe(before);
+    expect(store.jobs.get(41).legacyPaidBase).toBe("9999999999.99");
+  });
+});
+
+describe("8B-5c — legacyPaidBase YA SETEADA pero corrupta ⇒ FAIL CLOSED (INCOMPLETE)", () => {
+  const badBases: Array<[string, string]> = [
+    ["negativa", "-100.00"],
+    ["no numérica", "abc"],
+    ["ambigua (>2 decimales)", "100.005"],
+    ["fuera de rango", "10000000000.00"],
+  ];
+  for (const [label, base] of badBases) {
+    it(`rechaza y no escribe nada: base ${label}`, async () => {
+      seedJob(store, 50, { notes: jobNotes({ labor: 100000, paid: 0 }), base });
+      const before = store.transactions.size;
+      await expect(pay(store, 50, 1000_00)).rejects.toThrow(PAYMENT_ERR.INCOMPLETE);
+      expect(store.transactions.size).toBe(before);
+      expect(store.jobs.get(50).legacyPaidBase).toBe(base); // sin cambios
+      expect(cacheOf(store, 50)).toBe(0);
+    });
+  }
+});
