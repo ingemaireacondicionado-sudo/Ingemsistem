@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean as mysqlBoolean, customType } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean as mysqlBoolean, customType, index } from "drizzle-orm/mysql-core";
 
 /**
  * Columna MEDIUMBLOB (hasta 16 MB) para almacenar bytes de archivos privados en
@@ -274,7 +274,13 @@ export const transactions = mysqlTable("transactions", {
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  // 8B-5c: índice compuesto para el SUM canónico de cobros marcados de un job
+  // (WHERE relatedJobId = ? AND isJobPayment = true). El registro de cada cobro
+  // hace este SUM bajo lock; sin índice sería un full scan de transactions que
+  // crece con todo el histórico. Aditivo, no único (un job tiene varios cobros).
+  relatedJobPaymentIdx: index("idx_tx_related_job_payment").on(t.relatedJobId, t.isJobPayment),
+}));
 
 /**
  * Jobs (Trabajos)

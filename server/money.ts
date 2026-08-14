@@ -64,3 +64,14 @@ export function readStoredRate(value: unknown): number | null {
 export function centsToNumber(cents: number): number {
   return cents / 100;
 }
+
+// Centavos enteros → string decimal EXACTO con 2 decimales, por aritmética
+// entera (sin float, sin toFixed como cálculo). Para escribir columnas
+// DECIMAL(12,2) como jobs.legacyPaidBase.
+export function centsToDecimalString(cents: number): string {
+  const neg = cents < 0;
+  const abs = Math.abs(cents);
+  const intPart = Math.floor(abs / 100);
+  const frac = abs % 100;
+  return `${neg ? "-" : ""}${intPart}.${String(frac).padStart(2, "0")}`;
+}

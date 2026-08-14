@@ -25,11 +25,11 @@ vi.mock("./db", () => ({
   getJobById: async (id: number) => store.jobs.get(id),
   createJobWithFileBindings: async (jobData: any, _b: any[], _u: number) => { const id = store.nextJobId++; store.jobs.set(id, { id, ...jobData }); return { id }; },
   updateJobWithFileBindings: async (jobId: number, jobData: any, _b: any[] | null, _u: number) => { const j = store.jobs.get(jobId); if (j) Object.assign(j, jobData); },
-  // registerPayment: refleja 8B-5a — crea el cobro SIN isJobPayment (default false
-  // en la DB real, cuyo insert omite el campo). NO marca en esta subetapa.
+  // registerPayment: refleja 8B-5c — el cobro canónico se inserta MARCADO
+  // (isJobPayment=true), server-controlled. Es la única vía que crea filas marcadas.
   registerJobPaymentAtomic: async (params: any) => {
     const id = store.nextTxId++;
-    store.transactions.set(id, { id, type: "income", category: "Cobro de trabajo", relatedJobId: params.jobId, amount: params.amountCents / 100, isJobPayment: false });
+    store.transactions.set(id, { id, type: "income", category: "Cobro de trabajo", relatedJobId: params.jobId, amount: params.amountCents / 100, isJobPayment: true });
     return {
       transactionId: id, isFullyPaid: false, newAmountPaid: params.amountCents / 100, totalAmount: 999999,
       jobNumber: "J", title: "T", customerName: null, oldStatus: "invoiced", newStatus: "invoiced",
@@ -106,11 +106,13 @@ describe("8B-5a — isJobPayment server-controlled (transactions)", () => {
 });
 
 describe("8B-5a — legacyPaidBase server-controlled (jobs)", () => {
-  it("E) job create con legacyPaidBase del cliente → ignorado (no se setea)", async () => {
+  it("E) job create con legacyPaidBase del cliente → ignorado; server la fuerza a 0.00 (8B-5c)", async () => {
     const r = await caller("manager").jobs.create({
-      jobNumber: "J1", title: "T", legacyPaidBase: 999999,
+      jobNumber: "J1", title: "T", legacyPaidBase: 999999, // el cliente miente
     } as any);
-    expect("legacyPaidBase" in store.jobs.get(r.id)).toBe(false);
+    // 8B-5c: los jobs nuevos nacen canónicos con base 0.00 (server-controlled),
+    // nunca con el valor del cliente ni NULL.
+    expect(store.jobs.get(r.id).legacyPaidBase).toBe("0.00");
   });
 
   it("F) job update intentando modificar legacyPaidBase → preserva el valor real", async () => {
@@ -122,11 +124,14 @@ describe("8B-5a — legacyPaidBase server-controlled (jobs)", () => {
   });
 });
 
-describe("8B-5a — registerPayment TODAVÍA no crea cobros marcados", () => {
-  it("H) el cobro creado por registerPayment queda isJobPayment=false", async () => {
+describe("8B-5c — registerPayment crea el cobro MARCADO (canónico)", () => {
+  it("H) el cobro creado por registerPayment queda isJobPayment=true y es inmutable", async () => {
     const r = await caller("admin").jobs.registerPayment({ jobId: 7, amount: "1000", date: "2026-08-10", paymentMethod: "transfer", notes: "" });
     const tx = store.transactions.get(r.transactionId);
-    expect(tx.isJobPayment).toBe(false);
+    expect(tx.isJobPayment).toBe(true);
     expect(tx.relatedJobId).toBe(7);
+    // Al estar marcado, el CRUD genérico NO puede editarlo ni eliminarlo.
+    await expect(caller("admin").transactions.update({ id: r.transactionId, amount: "1" } as any)).rejects.toThrow(PROTECTED);
+    await expect(caller("admin").transactions.delete({ id: r.transactionId })).rejects.toThrow(PROTECTED);
   });
 });

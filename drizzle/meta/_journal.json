@@ -71,6 +71,13 @@
       "when": 1786657003923,
       "tag": "0009_serious_vapor",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1786674321767,
+      "tag": "0010_canonical_payment_index",
+      "breakpoints": true
     }
   ]
 }

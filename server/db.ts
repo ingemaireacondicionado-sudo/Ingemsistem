@@ -8,7 +8,7 @@ import {
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { hashPassword } from './passwordUtils';
-import { readStoredMoneyCents, readStoredRate, centsToNumber } from './money';
+import { readStoredMoneyCents, readStoredRate, centsToNumber, centsToDecimalString } from './money';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -789,15 +789,53 @@ export type RegisterPaymentResult = {
 };
 
 /**
- * Registra un cobro de forma ATÓMICA (8B-2/8B-3). Toda la operación ocurre en
- * UNA sola transacción de DB con la fila del job BLOQUEADA (FOR UPDATE):
+ * SUM canónico de cobros MARCADOS de un job, en CENTAVOS enteros. Único criterio:
+ * `relatedJobId = jobId AND isJobPayment = true`. NO usa category/type/description
+ * ni transactionStatus como criterio: la identidad canónica es exclusivamente el
+ * marcador server-controlled isJobPayment. Las transactions históricas quedan en
+ * isJobPayment=false y NUNCA entran a este SUM (su importe ya vive en
+ * legacyPaidBase vía el amountPaid legacy congelado en el cutover).
+ *
+ * Suma en la capa de aplicación (parseo exacto por fila con readStoredMoneyCents),
+ * no con SUM() de SQL, para no depender de la aritmética DECIMAL del motor y
+ * mantener toda la matemática de dinero en centavos enteros. Debe ejecutarse
+ * DENTRO de la misma transacción/lock que registerJobPaymentAtomic.
+ */
+async function sumMarkedJobPaymentsCents(tx: any, jobId: number): Promise<number> {
+  const rows = await tx
+    .select({ amount: transactions.amount })
+    .from(transactions)
+    .where(and(eq(transactions.relatedJobId, jobId), eq(transactions.isJobPayment, true)));
+  let total = 0;
+  for (const r of rows) {
+    const c = readStoredMoneyCents(r.amount);
+    // Un cobro marcado con importe ilegible es una corrupción del ledger canónico
+    // (no debería existir: registerPayment sólo inserta importes validados). Fail
+    // closed: aborta el cobro en vez de sumar de más/menos silenciosamente.
+    if (c === null) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
+    total += c;
+  }
+  return total;
+}
+
+/**
+ * Registra un cobro de forma ATÓMICA y CANÓNICA (8B-5c: cutover perezoso).
+ * Toda la operación ocurre en UNA transacción de DB con la fila del job BLOQUEADA
+ * (FOR UPDATE). La verdad de "cuánto se cobró" ya NO es el cache amountPaid, sino:
+ *
+ *     paidCanónico(job) = legacyPaidBase + SUM(transactions con isJobPayment=true)
+ *
+ * Flujo:
  *  1) lock + lectura del job vigente; 2) parseo seguro de notes; 3) IVA
- *  obligatorio (sin default silencioso); 4) total en centavos; 5) amountPaid
- *  vigente (legacy incluido); 6) saldo y validación del monto (no overpay);
- *  7) update de amountPaid/paymentStatus/status; 8) insert de la transaction de
- *  cobro en la MISMA transacción. Cualquier fallo => ROLLBACK completo. NO hace
- *  backfill de cobros legacy ni exige amountPaid == SUM(transactions) (eso es 8B-5).
- * `amountCents` ya viene validado (estricto) por el router.
+ *  obligatorio; 4) total en centavos; 5) RESOLVER legacyPaidBase (si es NULL,
+ *  CUTOVER PEREZOSO: congelarla una única vez desde el amountPaid legacy, ANTES de
+ *  marcar el primer cobro, bajo el mismo lock → nunca doble conteo); 6) SUM de
+ *  cobros marcados; 7) paidBefore = base + marcados; saldo y validación (no
+ *  overpay), sin confiar en el cache; 8) UPDATE del job (congela legacyPaidBase si
+ *  corresponde + status/paymentStatus + refresca el cache amountPaid = paidAfter);
+ *  9) INSERT del cobro con isJobPayment=true en la MISMA transacción, DESPUÉS de
+ *  congelada la base. Cualquier fallo => ROLLBACK completo (base sin congelar,
+ *  sin cobro). `amountCents` ya viene validado (estricto) por el router.
  */
 export async function registerJobPaymentAtomic(params: {
   jobId: number;
@@ -805,10 +843,14 @@ export async function registerJobPaymentAtomic(params: {
   date: string;
   paymentMethod: string;
   notes: string;
-}): Promise<RegisterPaymentResult> {
-  const db = await getDb();
+}, injectedDb?: any): Promise<RegisterPaymentResult> {
+  // `injectedDb` es sólo para tests (inyección del mismo patrón DI que
+  // exportAllData/seedIngemUsers). En producción SIEMPRE se usa getDb() real; en
+  // Vitest getDb() es fail-closed (nunca abre una conexión), así que los tests
+  // ejercen la lógica real de cutover pasando un fake in-memory transaccional.
+  const db = injectedDb ?? await getDb();
   if (!db) throw new Error("DB not available");
-  return db.transaction(async (tx) => {
+  return db.transaction(async (tx: any) => {
     // 1) Lock del job.
     const rows = await tx.select().from(jobs).where(eq(jobs.id, params.jobId)).for("update");
     const job = rows[0];
@@ -846,29 +888,59 @@ export async function registerJobPaymentAtomic(params: {
     const ivaCents = Math.round((subtotalCents * rate) / 100);
     const totalCents = subtotalCents + ivaCents;
 
-    // 5) amountPaid ACTUAL (previo/legacy) desde la fila bloqueada.
-    const prevCents = readStoredMoneyCents(meta.amountPaid);
-    if (prevCents === null) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
+    // 5) RESOLVER la base legacy (CUTOVER PEREZOSO). El cache amountPaid ya NO es
+    //    fuente de verdad para el saldo. La base congelada + los cobros marcados sí.
+    //    - legacyPaidBase NOT NULL → el job ya fue migrado: parsear ese valor exacto.
+    //    - legacyPaidBase NULL     → primer cobro post-8B-5c: congelar UNA vez desde
+    //      el amountPaid legacy (fila bloqueada). Si el legacy es ilegible, ROLLBACK
+    //      con error funcional claro (no se inventa una base).
+    //    La base se congela ANTES de insertar el primer cobro marcado (paso 9),
+    //    todo bajo el mismo FOR UPDATE → jamás doble conteo.
+    let baseCents: number;
+    let freezeBase = false;
+    if (job.legacyPaidBase !== null && job.legacyPaidBase !== undefined) {
+      const b = readStoredMoneyCents(job.legacyPaidBase);
+      if (b === null) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
+      baseCents = b;
+    } else {
+      const legacy = readStoredMoneyCents(meta.amountPaid);
+      if (legacy === null) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
+      baseCents = legacy;
+      freezeBase = true;
+    }
 
-    // 6) Saldo y validación del monto (sin overpay). Se calcula con el job bloqueado.
-    const balanceCents = totalCents - prevCents;
+    // 6) SUM canónico de cobros ya MARCADOS (isJobPayment=true) de este job. En el
+    //    cutover perezoso esto es 0 (aún no hay marcados); en cobros posteriores
+    //    acumula los registrados por este mismo flujo.
+    const markedCents = await sumMarkedJobPaymentsCents(tx, params.jobId);
+
+    // 7) paidBefore CANÓNICO. NUNCA se usa el cache amountPaid para validar el saldo.
+    const paidBeforeCents = baseCents + markedCents;
+    const balanceCents = totalCents - paidBeforeCents;
     if (balanceCents <= 0) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.ALREADY_PAID);
     if (params.amountCents > balanceCents) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.OVER_BALANCE);
 
-    const newCents = prevCents + params.amountCents;
-    const isFullyPaid = newCents >= totalCents; // con no-overpay ⇒ === total
+    const paidAfterCents = paidBeforeCents + params.amountCents;
+    const isFullyPaid = paidAfterCents >= totalCents; // con no-overpay ⇒ === total
     const newStatus = isFullyPaid ? "collected" : job.status;
     const newPaymentStatus = isFullyPaid ? "completed" : "partial";
 
-    // 7) Actualizar el job preservando el resto del meta (autoría, refs, costos…).
-    const newMeta = { ...meta, amountPaid: centsToNumber(newCents) };
-    await tx
-      .update(jobs)
-      .set({ status: newStatus, paymentStatus: newPaymentStatus, notes: JSON.stringify(newMeta) })
-      .where(eq(jobs.id, params.jobId));
+    // 8) Actualizar el job preservando el resto del meta (autoría, refs, costos…).
+    //    - amountPaid pasa a ser un CACHE/PROYECCIÓN del paidCanónico (== paidAfter).
+    //    - legacyPaidBase se CONGELA acá si es el primer cobro (freezeBase), en
+    //      DECIMAL exacto desde centavos (sin float), ANTES del insert marcado.
+    const newMeta = { ...meta, amountPaid: centsToNumber(paidAfterCents) };
+    const jobUpdate: Record<string, unknown> = {
+      status: newStatus,
+      paymentStatus: newPaymentStatus,
+      notes: JSON.stringify(newMeta),
+    };
+    if (freezeBase) jobUpdate.legacyPaidBase = centsToDecimalString(baseCents);
+    await tx.update(jobs).set(jobUpdate).where(eq(jobs.id, params.jobId));
 
-    // 8) Crear la transaction de cobro en la MISMA transacción. Campos sensibles
-    //    (type/category/relatedJobId) fijados server-side; el cliente no los controla.
+    // 9) Crear la transaction de cobro MARCADA (isJobPayment=true) en la MISMA
+    //    transacción, DESPUÉS de congelada la base. Campos sensibles
+    //    (type/category/relatedJobId/isJobPayment) fijados server-side.
     const amountNum = centsToNumber(params.amountCents);
     const ivaAmountNum = Math.round(((amountNum * rate) / (100 + rate)) * 100) / 100; // IVA incluido (semántica actual)
     const insertRes = await tx.insert(transactions).values({
@@ -892,13 +964,14 @@ export async function registerJobPaymentAtomic(params: {
       cuitComprador: "",
       cuitVendedor: job.customerCuit ?? "",
       relatedJobId: params.jobId,
+      isJobPayment: true,
       notes: params.notes || `Cobro registrado desde Cobranzas - ${job.jobNumber}`,
     });
 
     return {
       transactionId: insertRes[0].insertId,
       isFullyPaid,
-      newAmountPaid: centsToNumber(newCents),
+      newAmountPaid: centsToNumber(paidAfterCents),
       totalAmount: centsToNumber(totalCents),
       jobNumber: job.jobNumber ?? "",
       title: job.title ?? "",

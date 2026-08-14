@@ -730,7 +730,10 @@ export const appRouter = router({
         // 8B-1: estado financiero inicial SEGURO, no lo decide el cliente. Un job
         // nuevo nace sin cobros (no hay flujo legítimo que cree un job ya pagado).
         meta.amountPaid = 0;
-        const jobData = { ...input, notes: JSON.stringify(meta), paymentStatus: "pending" };
+        // 8B-5c: los jobs creados a partir del modelo canónico nacen con base legacy
+        // = 0.00 (nunca NULL): no arrastran cobros previos, y el cliente no la decide.
+        // Sólo los jobs anteriores quedan NULL y hacen cutover perezoso en el 1er cobro.
+        const jobData = { ...input, notes: JSON.stringify(meta), paymentStatus: "pending", legacyPaidBase: "0.00" };
         // Job + asociación de archivos en UNA sola transacción: si la validación
         // de pertenencia o el sellado fallan, se hace rollback del job completo
         // (no quedan estados parciales).
