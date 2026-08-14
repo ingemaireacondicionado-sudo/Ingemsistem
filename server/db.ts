@@ -8,7 +8,7 @@ import {
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { hashPassword } from './passwordUtils';
-import { readStoredMoneyCents, readExactStoredMoneyCents, readStoredRate, centsToNumber, centsToDecimalString, MAX_AMOUNT_CENTS } from './money';
+import { readStoredMoneyCents, readExactStoredMoneyCents, isAbsentMoneyValue, readStoredRate, centsToNumber, centsToDecimalString, MAX_AMOUNT_CENTS } from './money';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -471,6 +471,10 @@ export async function updateJobWithFileBindings(
         if (locked?.legacyPaidBase !== null && locked?.legacyPaidBase !== undefined) {
           const b = readExactStoredMoneyCents(locked.legacyPaidBase);
           paidCents = b.ok ? b.cents : null;
+        } else if (isAbsentMoneyValue(lockedMeta.amountPaid)) {
+          // base NULL + amountPaid ausente: NO se puede probar "sin historia".
+          // Se trata como desconocido (null) → bloquea el cambio de moneda.
+          paidCents = null;
         } else {
           const legacy = readExactStoredMoneyCents(lockedMeta.amountPaid);
           paidCents = legacy.ok ? legacy.cents : null;
@@ -989,6 +993,14 @@ export async function registerJobPaymentAtomic(params: {
       if (!b.ok) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
       baseCents = b.cents;
     } else {
+      // CUTOVER LEGACY: la AUSENCIA de amountPaid (clave faltante, null, "" o sólo
+      // whitespace) NO se interpreta como 0 — no prueba que el job nunca cobró.
+      // Fail-closed: hay que exigir un valor legacy EXPLÍCITO y determinable. Sólo
+      // un 0 explícito (0 / "0" / "0.00") congela base 0.00. Todo lo demás →
+      // CUTOVER_REVIEW (se resuelve por backfill controlado 8B-5d).
+      if (isAbsentMoneyValue(meta.amountPaid)) {
+        throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.CUTOVER_REVIEW);
+      }
       const legacy = readExactStoredMoneyCents(meta.amountPaid);
       if (!legacy.ok) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.CUTOVER_REVIEW);
       baseCents = legacy.cents;

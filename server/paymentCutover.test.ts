@@ -292,8 +292,8 @@ describe("8B-5c — cutover perezoso (A–M)", () => {
     await pay(store, 14, 1_00);
     expect(store.jobs.get(14).legacyPaidBase).toBe("1234.50");
 
-    // amountPaid ausente → base 0.00 (inequívoco: nada cobrado).
-    seedJob(store, 15, { notes: JSON.stringify({ laborCost: "100000", materialsCost: "0", otherCosts: "0", ivaRate: 0 }), base: null });
+    // amountPaid EXPLÍCITO 0 → base 0.00 (sí se puede congelar cero explícito).
+    seedJob(store, 15, { notes: jobNotes({ labor: 100000, paid: 0 }), base: null });
     await pay(store, 15, 1_00);
     expect(store.jobs.get(15).legacyPaidBase).toBe("0.00");
   });
@@ -433,6 +433,41 @@ describe("8B-5c — OVERFLOW ACUMULADO ⇒ FAIL CLOSED (cada fila válida, la su
     await expect(pay(store, 41, 1_00)).rejects.toThrow(PAYMENT_ERR.LEDGER_CORRUPT);
     expect(store.transactions.size).toBe(before);
     expect(store.jobs.get(41).legacyPaidBase).toBe("9999999999.99");
+  });
+});
+
+describe("8B-5c — cutover legacy: amountPaid AUSENTE ≠ 0 ⇒ FAIL CLOSED (CUTOVER_REVIEW)", () => {
+  const costs = { laborCost: "10000", materialsCost: "0", otherCosts: "0", ivaRate: 0 };
+  // Casos de AUSENCIA/indeterminación: la clave falta, o es null/""/whitespace.
+  const absentCases: Array<[string, string]> = [
+    ["clave amountPaid ausente", JSON.stringify(costs)],
+    ["amountPaid = null", JSON.stringify({ ...costs, amountPaid: null })],
+    ['amountPaid = ""', JSON.stringify({ ...costs, amountPaid: "" })],
+    ["amountPaid = '   ' (whitespace)", JSON.stringify({ ...costs, amountPaid: "   " })],
+    ["amountPaid indeterminable (basura)", JSON.stringify({ ...costs, amountPaid: "???" })],
+  ];
+  for (const [label, notes] of absentCases) {
+    it(`base NULL + ${label} → CUTOVER_REVIEW, cero escrituras`, async () => {
+      seedJob(store, 70, { notes, base: null });
+      const notesBefore = store.jobs.get(70).notes;
+      const statusBefore = store.jobs.get(70).paymentStatus;
+      await expect(pay(store, 70, 1000_00)).rejects.toThrow(PAYMENT_ERR.CUTOVER_REVIEW);
+      expect(store.jobs.get(70).legacyPaidBase).toBeNull(); // sigue NULL
+      expect(markedTxs(store, 70)).toHaveLength(0);          // cero transaction nueva
+      expect(store.transactions.size).toBe(0);
+      expect(store.jobs.get(70).notes).toBe(notesBefore);    // notes/amountPaid intactos
+      expect(store.jobs.get(70).paymentStatus).toBe(statusBefore); // paymentStatus intacto
+    });
+  }
+
+  it("base NULL + amountPaid EXPLÍCITO 0 → cutover permitido, congela 0.00", async () => {
+    for (const [id, paid] of [[71, 0], [72, "0"], [73, "0.00"]] as Array<[number, unknown]>) {
+      seedJob(store, id, { notes: JSON.stringify({ ...costs, amountPaid: paid }), base: null });
+      await pay(store, id, 1000_00);
+      expect(store.jobs.get(id).legacyPaidBase).toBe("0.00");
+      expect(markedTxs(store, id)).toHaveLength(1);
+      expect(cacheOf(store, id)).toBe(1000);
+    }
   });
 });
 

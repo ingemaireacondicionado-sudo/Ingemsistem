@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parsePaymentAmountCents, readStoredMoneyCents, readExactStoredMoneyCents, readStoredRate, centsToDecimalString, MAX_AMOUNT_CENTS } from "./money";
+import { parsePaymentAmountCents, readStoredMoneyCents, readExactStoredMoneyCents, isAbsentMoneyValue, readStoredRate, centsToDecimalString, MAX_AMOUNT_CENTS } from "./money";
 
 describe("parsePaymentAmountCents — parser estricto de montos entrantes", () => {
   it("acepta enteros y hasta 2 decimales", () => {
@@ -94,6 +94,23 @@ describe("readExactStoredMoneyCents — lector EXACTO fail-closed (cutover 8B-5c
         expect(readExactStoredMoneyCents(frozen)).toEqual({ ok: true, cents: r.cents });
       }
     }
+  });
+});
+
+describe("isAbsentMoneyValue — presencia explícita (cutover legacy: missing ≠ zero)", () => {
+  it("AUSENTE: undefined, null, '' y sólo whitespace", () => {
+    expect(isAbsentMoneyValue(undefined)).toBe(true);
+    expect(isAbsentMoneyValue(null)).toBe(true);
+    expect(isAbsentMoneyValue("")).toBe(true);
+    expect(isAbsentMoneyValue("   ")).toBe(true);
+    expect(isAbsentMoneyValue("\t\n ")).toBe(true);
+  });
+  it("PRESENTE: cero explícito y cualquier número/valor", () => {
+    expect(isAbsentMoneyValue(0)).toBe(false);
+    expect(isAbsentMoneyValue("0")).toBe(false);
+    expect(isAbsentMoneyValue("0.00")).toBe(false);
+    expect(isAbsentMoneyValue("100")).toBe(false);
+    expect(isAbsentMoneyValue("abc")).toBe(false); // presente pero indeterminable
   });
 });
 

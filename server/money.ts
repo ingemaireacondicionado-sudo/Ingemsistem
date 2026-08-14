@@ -51,6 +51,21 @@ export type ExactCents =
   | { ok: false; reason: "ambiguous" | "invalid" };
 
 /**
+ * ¿El valor monetario está AUSENTE? (clave faltante → undefined, null, o string
+ * vacío/whitespace). Para el CUTOVER LEGACY la ausencia NO equivale a 0: no prueba
+ * que el job nunca haya cobrado, así que debe fallar cerrado en vez de congelar 0.
+ * Es un chequeo de PRESENCIA aparte, para no romper la semántica genérica de
+ * readExactStoredMoneyCents (ausente → 0), que otros call sites sí necesitan.
+ */
+export function isAbsentMoneyValue(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === "string" && value.trim() === "")
+  );
+}
+
+/**
  * Lector EXACTO y FAIL-CLOSED de un valor monetario guardado, para el CUTOVER
  * perezoso (congelar legacyPaidBase). A diferencia de readStoredMoneyCents, NO
  * redondea: sólo acepta valores cuya representación en centavos es INEQUÍVOCA

@@ -270,4 +270,18 @@ describe("8B-5c — blindaje de MONEDA en jobs.update (DB/domain)", () => {
     expect(currencyOf(64)).toBe("ARS");
     expect(store.jobs.get(64).title).toBe("editado");
   });
+
+  it("F) base NULL + amountPaid AUSENTE + cambio de moneda → BLOQUEADO (ausencia ≠ sin historia)", async () => {
+    // notes SIN clave amountPaid (base aún NULL): no se puede probar que no cobró.
+    store.jobs.set(65, { id: 65, title: "T", paymentStatus: "partial", legacyPaidBase: null, notes: notes({ currency: "ARS", laborCost: "10000" }) });
+    await expect(updateJobWithFileBindings(65, { notes: notes({ currency: "USD", laborCost: "10000" }) }, null, 1, fake))
+      .rejects.toThrow(PAYMENT_ERR.CURRENCY_LOCKED);
+    expect(currencyOf(65)).toBe("ARS");
+  });
+
+  it("G) base NULL + amountPaid EXPLÍCITO 0 + sin marcados → cambio de moneda PERMITIDO", async () => {
+    store.jobs.set(66, { id: 66, title: "T", paymentStatus: "partial", legacyPaidBase: null, notes: notes({ currency: "ARS", laborCost: "10000", amountPaid: 0 }) });
+    await updateJobWithFileBindings(66, { notes: notes({ currency: "USD", laborCost: "10000", amountPaid: 0 }) }, null, 1, fake);
+    expect(currencyOf(66)).toBe("USD");
+  });
 });
