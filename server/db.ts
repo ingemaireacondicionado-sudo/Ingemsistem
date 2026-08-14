@@ -8,7 +8,7 @@ import {
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { hashPassword } from './passwordUtils';
-import { readStoredMoneyCents, readStoredRate, centsToNumber, centsToDecimalString } from './money';
+import { readStoredMoneyCents, readExactStoredMoneyCents, readStoredRate, centsToNumber, centsToDecimalString } from './money';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -774,6 +774,11 @@ export const PAYMENT_ERR = {
   IVA_MISSING: "El trabajo no tiene una alícuota de IVA definida. Editalo antes de registrar el cobro.",
   INCOMPLETE: "El trabajo tiene datos financieros incompletos. Revisalo antes de registrar el cobro.",
   NOT_FOUND: "Trabajo no encontrado.",
+  // 8B-5c fail-closed: el monto ya cobrado histórico no es inequívoco (precisión
+  // inesperada o dato ilegible) y NO se congela automáticamente la base. Los casos
+  // legítimos (p. ej. los históricos con exceso de precisión) se resuelven con la
+  // migración controlada de legacyPaidBase (8B-5d), no por el cutover perezoso.
+  CUTOVER_REVIEW: "El monto ya cobrado de este trabajo no puede migrarse automáticamente (precisión inesperada o dato ilegible). Requiere revisión y migración manual de la base antes de registrar cobros.",
 } as const;
 
 export type RegisterPaymentResult = {
@@ -892,20 +897,24 @@ export async function registerJobPaymentAtomic(params: {
     //    fuente de verdad para el saldo. La base congelada + los cobros marcados sí.
     //    - legacyPaidBase NOT NULL → el job ya fue migrado: parsear ese valor exacto.
     //    - legacyPaidBase NULL     → primer cobro post-8B-5c: congelar UNA vez desde
-    //      el amountPaid legacy (fila bloqueada). Si el legacy es ilegible, ROLLBACK
-    //      con error funcional claro (no se inventa una base).
+    //      el amountPaid legacy (fila bloqueada), FAIL-CLOSED: SOLO si el monto es
+    //      inequívoco (≤2 decimales exactos). Si tiene precisión inesperada o es
+    //      ilegible → ROLLBACK con CUTOVER_REVIEW (no se redondea ni se inventa una
+    //      base; esos casos se migran con el backfill controlado 8B-5d).
     //    La base se congela ANTES de insertar el primer cobro marcado (paso 9),
     //    todo bajo el mismo FOR UPDATE → jamás doble conteo.
     let baseCents: number;
     let freezeBase = false;
     if (job.legacyPaidBase !== null && job.legacyPaidBase !== undefined) {
-      const b = readStoredMoneyCents(job.legacyPaidBase);
-      if (b === null) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
-      baseCents = b;
+      // Base ya migrada: DECIMAL(12,2) siempre trae ≤2 decimales. Si viniera
+      // ambigua/ilegible es una corrupción del dato migrado → fail-closed.
+      const b = readExactStoredMoneyCents(job.legacyPaidBase);
+      if (!b.ok) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
+      baseCents = b.cents;
     } else {
-      const legacy = readStoredMoneyCents(meta.amountPaid);
-      if (legacy === null) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.INCOMPLETE);
-      baseCents = legacy;
+      const legacy = readExactStoredMoneyCents(meta.amountPaid);
+      if (!legacy.ok) throw new PaymentError("BAD_REQUEST", PAYMENT_ERR.CUTOVER_REVIEW);
+      baseCents = legacy.cents;
       freezeBase = true;
     }
 

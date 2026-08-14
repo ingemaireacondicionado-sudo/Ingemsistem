@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parsePaymentAmountCents, readStoredMoneyCents, readStoredRate, MAX_AMOUNT_CENTS } from "./money";
+import { parsePaymentAmountCents, readStoredMoneyCents, readExactStoredMoneyCents, readStoredRate, centsToDecimalString, MAX_AMOUNT_CENTS } from "./money";
 
 describe("parsePaymentAmountCents — parser estricto de montos entrantes", () => {
   it("acepta enteros y hasta 2 decimales", () => {
@@ -42,6 +42,58 @@ describe("readStoredMoneyCents — lector tolerante de valores guardados", () =>
     expect(readStoredMoneyCents(NaN)).toBeNull();
     expect(readStoredMoneyCents(Infinity)).toBeNull();
     expect(readStoredMoneyCents({} as any)).toBeNull();
+  });
+});
+
+describe("readExactStoredMoneyCents — lector EXACTO fail-closed (cutover 8B-5c)", () => {
+  it("acepta montos INEQUÍVOCOS (≤2 decimales significativos) sin redondear", () => {
+    expect(readExactStoredMoneyCents(4000)).toEqual({ ok: true, cents: 400000 });
+    expect(readExactStoredMoneyCents(1234.5)).toEqual({ ok: true, cents: 123450 });
+    expect(readExactStoredMoneyCents(1234.56)).toEqual({ ok: true, cents: 123456 }); // sin error float
+    expect(readExactStoredMoneyCents("1234.56")).toEqual({ ok: true, cents: 123456 });
+    expect(readExactStoredMoneyCents("0.01")).toEqual({ ok: true, cents: 1 });
+    // Ceros a la derecha NO son precisión → se aceptan.
+    expect(readExactStoredMoneyCents("1234.500")).toEqual({ ok: true, cents: 123450 });
+    expect(readExactStoredMoneyCents("100.00")).toEqual({ ok: true, cents: 10000 });
+  });
+
+  it("campo ausente ⇒ 0 (inequívoco: nada cobrado)", () => {
+    expect(readExactStoredMoneyCents(undefined)).toEqual({ ok: true, cents: 0 });
+    expect(readExactStoredMoneyCents(null)).toEqual({ ok: true, cents: 0 });
+    expect(readExactStoredMoneyCents("")).toEqual({ ok: true, cents: 0 });
+    expect(readExactStoredMoneyCents("   ")).toEqual({ ok: true, cents: 0 });
+  });
+
+  it("AMBIGUOUS: >2 decimales significativos o notación científica → fail-closed", () => {
+    expect(readExactStoredMoneyCents(100.005)).toEqual({ ok: false, reason: "ambiguous" });
+    expect(readExactStoredMoneyCents("4000.999")).toEqual({ ok: false, reason: "ambiguous" });
+    expect(readExactStoredMoneyCents("12345.600000000001")).toEqual({ ok: false, reason: "ambiguous" });
+    expect(readExactStoredMoneyCents("1e3")).toEqual({ ok: false, reason: "ambiguous" });
+    expect(readExactStoredMoneyCents(1e3 + 0.001)).toEqual({ ok: false, reason: "ambiguous" });
+  });
+
+  it("INVALID: basura, no numérico, negativo o fuera de rango → fail-closed", () => {
+    expect(readExactStoredMoneyCents("abc")).toEqual({ ok: false, reason: "invalid" });
+    expect(readExactStoredMoneyCents("100abc")).toEqual({ ok: false, reason: "invalid" });
+    expect(readExactStoredMoneyCents(NaN)).toEqual({ ok: false, reason: "invalid" });
+    expect(readExactStoredMoneyCents(Infinity)).toEqual({ ok: false, reason: "invalid" });
+    expect(readExactStoredMoneyCents({} as any)).toEqual({ ok: false, reason: "invalid" });
+    expect(readExactStoredMoneyCents(-10)).toEqual({ ok: false, reason: "invalid" });
+    expect(readExactStoredMoneyCents("-0.5")).toEqual({ ok: false, reason: "invalid" });
+    expect(readExactStoredMoneyCents("99999999999999").ok).toBe(false); // > DECIMAL(12,2)
+    expect(readExactStoredMoneyCents("-0")).toEqual({ ok: true, cents: 0 }); // -0 == 0
+  });
+
+  it("congela de forma inversible con centsToDecimalString (round-trip exacto)", () => {
+    for (const raw of ["0", "4000", "1234.5", "1234.56", "0.01", "9999999999.99"]) {
+      const r = readExactStoredMoneyCents(raw);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        const frozen = centsToDecimalString(r.cents);
+        // Re-leer la base congelada da los MISMOS centavos (no hay deriva).
+        expect(readExactStoredMoneyCents(frozen)).toEqual({ ok: true, cents: r.cents });
+      }
+    }
   });
 });
 

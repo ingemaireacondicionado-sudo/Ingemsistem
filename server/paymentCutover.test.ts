@@ -252,9 +252,9 @@ describe("8B-5c — cutover perezoso (A–M)", () => {
     await expect(pay(store, 6, 1_00)).rejects.toThrow(PAYMENT_ERR.ALREADY_PAID);
   });
 
-  it("I) ROLLBACK: amountPaid legacy ilegible en base NULL → INCOMPLETE, base NO congelada", async () => {
+  it("I) ROLLBACK: amountPaid legacy ilegible en base NULL → CUTOVER_REVIEW, base NO congelada", async () => {
     seedJob(store, 7, { notes: jobNotes({ labor: 10000, paid: "abc" }), base: null });
-    await expect(pay(store, 7, 1000_00)).rejects.toThrow(PAYMENT_ERR.INCOMPLETE);
+    await expect(pay(store, 7, 1000_00)).rejects.toThrow(PAYMENT_ERR.CUTOVER_REVIEW);
     expect(store.jobs.get(7).legacyPaidBase).toBeNull(); // no se congeló nada
     expect(markedTxs(store, 7)).toHaveLength(0);
     expect(store.nextTxId).toBe(1); // ningún insert
@@ -276,15 +276,41 @@ describe("8B-5c — cutover perezoso (A–M)", () => {
     expect(markedTxs(store, 9)).toHaveLength(0);
   });
 
-  it("L) congelado EXACTO en DECIMAL(12,2) desde centavos (readStoredMoneyCents redondea a 2)", async () => {
+  it("L) congelado EXACTO sólo para montos inequívocos (≤2 decimales); nunca se redondea", async () => {
+    // Inequívoco (2 decimales exactos) → se congela tal cual, sin float.
     seedJob(store, 10, { notes: jobNotes({ labor: 100000, paid: 1234.5 }), base: null });
     await pay(store, 10, 1_00);
     expect(store.jobs.get(10).legacyPaidBase).toBe("1234.50");
 
-    // Valor con exceso de precisión (uno de los 7 históricos): 100.005 → 100.01.
-    seedJob(store, 11, { notes: jobNotes({ labor: 100000, paid: 100.005 }), base: null });
-    await pay(store, 11, 1_00);
-    expect(store.jobs.get(11).legacyPaidBase).toBe("100.01");
+    // Entero → base con 2 decimales exactos.
+    seedJob(store, 13, { notes: jobNotes({ labor: 100000, paid: 4000 }), base: null });
+    await pay(store, 13, 1_00);
+    expect(store.jobs.get(13).legacyPaidBase).toBe("4000.00");
+
+    // Ceros a la derecha NO cuentan como precisión → "1234.500" == 1234.50 se acepta.
+    seedJob(store, 14, { notes: jobNotes({ labor: 100000, paid: "1234.500" }), base: null });
+    await pay(store, 14, 1_00);
+    expect(store.jobs.get(14).legacyPaidBase).toBe("1234.50");
+
+    // amountPaid ausente → base 0.00 (inequívoco: nada cobrado).
+    seedJob(store, 15, { notes: JSON.stringify({ laborCost: "100000", materialsCost: "0", otherCosts: "0", ivaRate: 0 }), base: null });
+    await pay(store, 15, 1_00);
+    expect(store.jobs.get(15).legacyPaidBase).toBe("0.00");
+  });
+
+  it("L2) FAIL-CLOSED: amountPaid con >2 decimales inesperados NO se congela (CUTOVER_REVIEW)", async () => {
+    // El caso que antes se redondeaba silenciosamente (100.005). Ahora se rechaza:
+    // los 7 históricos aprobados se migran por backfill controlado (8B-5d), no acá.
+    seedJob(store, 16, { notes: jobNotes({ labor: 100000, paid: 100.005 }), base: null });
+    await expect(pay(store, 16, 1_00)).rejects.toThrow(PAYMENT_ERR.CUTOVER_REVIEW);
+    expect(store.jobs.get(16).legacyPaidBase).toBeNull(); // NO congelada
+    expect(markedTxs(store, 16)).toHaveLength(0);
+
+    // Idem con string con exceso de precisión.
+    seedJob(store, 17, { notes: jobNotes({ labor: 100000, paid: "4000.999" }), base: null });
+    await expect(pay(store, 17, 1_00)).rejects.toThrow(PAYMENT_ERR.CUTOVER_REVIEW);
+    expect(store.jobs.get(17).legacyPaidBase).toBeNull();
+    expect(markedTxs(store, 17)).toHaveLength(0);
   });
 
   it("M) transición de estados y refresco de cache: parcial mantiene status; total → collected/completed", async () => {
