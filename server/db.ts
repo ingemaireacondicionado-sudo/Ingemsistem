@@ -1,7 +1,6 @@
 import { eq, desc, sql, like, and, inArray, lt, or, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import mysql from "mysql2";
-import { assertPaymentsGateOpen } from "./paymentsGate";
+import { assertPaymentsGateOpen, runPessimisticPaymentTx, type PaymentConn } from "./paymentsGate";
 import {
   InsertUser, users,
   customers, suppliers, products, technicians,
@@ -46,22 +45,11 @@ export async function getDb() {
   const url = resolveDbUrl();
   if (!url) return null;
   try {
-    // 8B-5 (INVARIANTE PESIMISTA): el gate de cobranzas depende de que
-    // SELECT ... FOR UPDATE tome un lock PESIMISTA real (barrera de drenaje). El
-    // driver drizzle/mysql2 emite un `BEGIN` plano cuyo modo lo decide la variable
-    // de sesión tidb_txn_mode; no expone `BEGIN PESSIMISTIC`. Por eso se crea un
-    // pool EXPLÍCITO y cada conexión nueva fija su sesión en modo pesimista ANTES
-    // de usarse (queda encolado FIFO antes de cualquier BEGIN de esa conexión).
-    // TiDB ya usa pesimista por defecto (v3.0.8+); esto lo hace explícito y
-    // verificable. Verificación operacional obligatoria antes de activar el gate:
-    //   SELECT @@tidb_txn_mode;  SELECT @@global.tidb_txn_mode;  → 'pessimistic'.
-    const pool = mysql.createPool(url);
-    pool.on("connection", (conn) => {
-      // Fire-and-forget con callback que ignora el error (en TiDB no falla; en un
-      // motor sin la variable, la comprobación operacional lo detectaría).
-      (conn as any).query("SET SESSION tidb_txn_mode = 'pessimistic'", () => {});
-    });
-    _db = drizzle(pool);
+    // La app NO se fuerza globalmente a pesimista (8B-5): sólo la transacción de
+    // cobro usa una frontera PESIMISTA EXPLÍCITA (BEGIN PESSIMISTIC) sobre su
+    // propia conexión física (ver acquirePaymentConn + runPessimisticPaymentTx).
+    // El resto de la app conserva su comportamiento previo.
+    _db = drizzle(url);
   } catch {
     // Nunca se loguea la URL (podría contener credenciales).
     console.warn("[Database] connection init failed");
@@ -71,9 +59,33 @@ export async function getDb() {
 }
 
 /**
- * Comprobación OPERACIONAL del modo de transacción efectivo (para Manus, antes de
- * activar el gate). Devuelve el tidb_txn_mode de sesión y global. La activación del
- * gate NO está autorizada hasta verificar que ambos son 'pessimistic'.
+ * Adquiere una CONEXIÓN FÍSICA concreta del pool para la transacción de cobro y un
+ * contexto drizzle LIGADO A ESA conexión. Es el `acquire` de producción de
+ * runPessimisticPaymentTx: garantiza que BEGIN PESSIMISTIC, el SELECT ... FOR
+ * UPDATE del gate y del job, los writes y el COMMIT corran TODOS sobre la misma
+ * conexión (sin depender de la afinidad del pool). La conexión se libera en el
+ * finally del runner.
+ */
+async function acquirePaymentConn(): Promise<{ conn: PaymentConn; tx: any }> {
+  const rootDb = await getDb();
+  if (!rootDb) throw new Error("DB not available");
+  const pool: any = (rootDb as any).$client; // pool mysql2 creado por drizzle(url)
+  const raw: any = await pool.promise().getConnection(); // UNA conexión física
+  return {
+    conn: {
+      query: (s: string) => raw.query(s),
+      release: () => raw.release(),
+    },
+    tx: drizzle(raw), // drizzle ligado a ESA conexión (no al pool)
+  };
+}
+
+/**
+ * Comprobación OPERACIONAL (para Manus, antes de activar el gate). El modo efectivo
+ * de la transacción de cobro se garantiza con BEGIN PESSIMISTIC EXPLÍCITO, no con
+ * la variable de sesión; `@@tidb_txn_mode` sólo refleja el DEFAULT de sesión (útil
+ * como señal secundaria). La prueba autoritativa es de comportamiento: que
+ * `BEGIN PESSIMISTIC` se ejecute sin error y que un FOR UPDATE concurrente bloquee.
  */
 export async function getTidbTxnMode(): Promise<{ session: string | null; global: string | null }> {
   const db = await getDb();
@@ -972,13 +984,13 @@ export async function registerJobPaymentAtomic(params: {
   paymentMethod: string;
   notes: string;
 }, injectedDb?: any): Promise<RegisterPaymentResult> {
-  // `injectedDb` es sólo para tests (inyección del mismo patrón DI que
-  // exportAllData/seedIngemUsers). En producción SIEMPRE se usa getDb() real; en
-  // Vitest getDb() es fail-closed (nunca abre una conexión), así que los tests
-  // ejercen la lógica real de cutover pasando un fake in-memory transaccional.
-  const db = injectedDb ?? await getDb();
-  if (!db) throw new Error("DB not available");
-  return db.transaction(async (tx: any) => {
+  // Cuerpo transaccional del cobro. Corre bajo:
+  //  - PRODUCCIÓN: runPessimisticPaymentTx(acquirePaymentConn, body) → BEGIN
+  //    PESSIMISTIC EXPLÍCITO sobre UNA conexión física; el gate y el job se
+  //    lockean pesimista en esa misma conexión.
+  //  - TESTS: injectedDb.transaction(body) → fake in-memory que modela
+  //    transaction + rollback (Vitest es fail-closed; no hay conexión real).
+  const body = async (tx: any) => {
     // 0) GATE GLOBAL DE COBRANZAS (8B-5). PRIMERA operación material: lee
     //    system_controls[payments_locked] con SELECT ... FOR UPDATE (fail-closed).
     //    Si el gate no está inequívocamente abierto ('false') ⇒ PaymentError
@@ -1135,7 +1147,12 @@ export async function registerJobPaymentAtomic(params: {
       oldStatus: job.status ?? "invoiced",
       newStatus: newStatus ?? "invoiced",
     };
-  });
+  };
+
+  // Tests: fake transaccional inyectado (modela transaction + rollback).
+  if (injectedDb) return injectedDb.transaction(body);
+  // Producción: frontera PESIMISTA EXPLÍCITA (BEGIN PESSIMISTIC) en UNA conexión física.
+  return runPessimisticPaymentTx(acquirePaymentConn, body);
 }
 
 export async function getNextBudgetNumber(): Promise<string> {

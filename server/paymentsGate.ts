@@ -52,3 +52,42 @@ export async function assertPaymentsGateOpen(tx: any): Promise<void> {
     throw new PaymentError("PRECONDITION_FAILED", PAYMENT_ERR.MAINTENANCE);
   }
 }
+
+/** Conexión física mínima que el runner necesita: ejecutar SQL crudo y liberarse. */
+export type PaymentConn = {
+  query(sql: string): Promise<unknown>;
+  release(): void;
+};
+
+/**
+ * Runner de la transacción de cobro con FRONTERA PESIMISTA EXPLÍCITA. Garantiza
+ * que TODO ocurre sobre UNA MISMA conexión física:
+ *   BEGIN PESSIMISTIC → body(tx) [gate FOR UPDATE → job FOR UPDATE → writes] → COMMIT
+ * (o ROLLBACK ante cualquier error), y libera la conexión en finally.
+ *
+ * `acquire` devuelve la conexión física y el contexto drizzle LIGADO A ESA misma
+ * conexión (no al pool), de modo que el body no puede "saltar" a otra conexión. El
+ * BEGIN PESSIMISTIC explícito hace la transacción pesimista sin depender de la
+ * variable de sesión tidb_txn_mode ni de la afinidad del pool. En producción
+ * `acquire` toma una conexión concreta del pool; en tests se inyecta un fake que
+ * modela la conexión física para probar el contrato (misma conexión, orden, lock).
+ */
+export async function runPessimisticPaymentTx<T>(
+  acquire: () => Promise<{ conn: PaymentConn; tx: any }>,
+  body: (tx: any) => Promise<T>,
+): Promise<T> {
+  const { conn, tx } = await acquire();
+  try {
+    await conn.query("BEGIN PESSIMISTIC"); // frontera pesimista EXPLÍCITA
+    try {
+      const result = await body(tx);
+      await conn.query("COMMIT");
+      return result;
+    } catch (e) {
+      await conn.query("ROLLBACK");
+      throw e;
+    }
+  } finally {
+    conn.release(); // SIEMPRE libera la conexión física
+  }
+}
