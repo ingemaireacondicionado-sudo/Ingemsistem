@@ -1,5 +1,7 @@
 import { eq, desc, sql, like, and, inArray, lt, or, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import mysql from "mysql2";
+import { assertPaymentsGateOpen } from "./paymentsGate";
 import {
   InsertUser, users,
   customers, suppliers, products, technicians,
@@ -44,13 +46,50 @@ export async function getDb() {
   const url = resolveDbUrl();
   if (!url) return null;
   try {
-    _db = drizzle(url);
+    // 8B-5 (INVARIANTE PESIMISTA): el gate de cobranzas depende de que
+    // SELECT ... FOR UPDATE tome un lock PESIMISTA real (barrera de drenaje). El
+    // driver drizzle/mysql2 emite un `BEGIN` plano cuyo modo lo decide la variable
+    // de sesión tidb_txn_mode; no expone `BEGIN PESSIMISTIC`. Por eso se crea un
+    // pool EXPLÍCITO y cada conexión nueva fija su sesión en modo pesimista ANTES
+    // de usarse (queda encolado FIFO antes de cualquier BEGIN de esa conexión).
+    // TiDB ya usa pesimista por defecto (v3.0.8+); esto lo hace explícito y
+    // verificable. Verificación operacional obligatoria antes de activar el gate:
+    //   SELECT @@tidb_txn_mode;  SELECT @@global.tidb_txn_mode;  → 'pessimistic'.
+    const pool = mysql.createPool(url);
+    pool.on("connection", (conn) => {
+      // Fire-and-forget con callback que ignora el error (en TiDB no falla; en un
+      // motor sin la variable, la comprobación operacional lo detectaría).
+      (conn as any).query("SET SESSION tidb_txn_mode = 'pessimistic'", () => {});
+    });
+    _db = drizzle(pool);
   } catch {
     // Nunca se loguea la URL (podría contener credenciales).
     console.warn("[Database] connection init failed");
     _db = null;
   }
   return _db;
+}
+
+/**
+ * Comprobación OPERACIONAL del modo de transacción efectivo (para Manus, antes de
+ * activar el gate). Devuelve el tidb_txn_mode de sesión y global. La activación del
+ * gate NO está autorizada hasta verificar que ambos son 'pessimistic'.
+ */
+export async function getTidbTxnMode(): Promise<{ session: string | null; global: string | null }> {
+  const db = await getDb();
+  if (!db) return { session: null, global: null };
+  try {
+    const res: any = await db.execute(
+      sql`SELECT @@tidb_txn_mode AS sessionMode, @@global.tidb_txn_mode AS globalMode`,
+    );
+    const row = Array.isArray(res) ? res[0]?.[0] ?? res[0] : res;
+    return {
+      session: row?.sessionMode ?? null,
+      global: row?.globalMode ?? null,
+    };
+  } catch {
+    return { session: null, global: null };
+  }
 }
 
 // ========== Manus OAuth Users ==========
@@ -827,7 +866,7 @@ export async function deleteJob(id: number) {
 // Error funcional del flujo de cobro. El router lo mapea a TRPCError con el
 // código correcto. Los mensajes son de negocio (nunca exponen SQL/stack).
 export class PaymentError extends Error {
-  constructor(public code: "BAD_REQUEST" | "NOT_FOUND" | "FORBIDDEN", message: string) {
+  constructor(public code: "BAD_REQUEST" | "NOT_FOUND" | "FORBIDDEN" | "PRECONDITION_FAILED", message: string) {
     super(message);
     this.name = "PaymentError";
   }
@@ -853,6 +892,9 @@ export const PAYMENT_ERR = {
   // moneda de un trabajo con historia financiera, por el CRUD genérico.
   PROTECTED: "Este movimiento es un cobro registrado del sistema y no puede editarse ni eliminarse manualmente.",
   CURRENCY_LOCKED: "No se puede cambiar la moneda de un trabajo que ya tiene cobros o saldo registrado.",
+  // 8B-5 gate global de cobranzas: bloqueadas por mantenimiento/cutover. Mensaje
+  // funcional sin filtrar detalles de DB. El router lo mapea a PRECONDITION_FAILED.
+  MAINTENANCE: "Las cobranzas están temporalmente bloqueadas por mantenimiento. Intentá nuevamente más tarde.",
 } as const;
 
 export type RegisterPaymentResult = {
@@ -937,6 +979,12 @@ export async function registerJobPaymentAtomic(params: {
   const db = injectedDb ?? await getDb();
   if (!db) throw new Error("DB not available");
   return db.transaction(async (tx: any) => {
+    // 0) GATE GLOBAL DE COBRANZAS (8B-5). PRIMERA operación material: lee
+    //    system_controls[payments_locked] con SELECT ... FOR UPDATE (fail-closed).
+    //    Si el gate no está inequívocamente abierto ('false') ⇒ PaymentError
+    //    MAINTENANCE y ROLLBACK, ANTES de tocar el job, el ledger o el cache.
+    await assertPaymentsGateOpen(tx);
+
     // 1) Lock del job.
     const rows = await tx.select().from(jobs).where(eq(jobs.id, params.jobId)).for("update");
     const job = rows[0];

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { registerJobPaymentAtomic, PaymentError, PAYMENT_ERR } from "./db";
-import { jobs as jobsTable, transactions as txTable } from "../drizzle/schema";
+import { jobs as jobsTable, transactions as txTable, systemControls as sysCtrlTable } from "../drizzle/schema";
+import { PAYMENTS_LOCKED_KEY } from "./paymentsGate";
 
 // 8B-5c — CUTOVER PEREZOSO + COBRO CANÓNICO.
 //
@@ -21,6 +22,8 @@ type Store = {
   jobs: Map<number, any>;
   transactions: Map<number, any>;
   nextTxId: number;
+  // Gate global de cobranzas: system_controls[controlKey] = value.
+  controls: Map<string, string>;
 };
 
 // Extrae los parámetros ligados (bound params) de una condición SQL de drizzle,
@@ -44,6 +47,15 @@ function boundParams(cond: any): any[] {
 function execSelect(store: Store, table: any, pred: any): any[] {
   const params = boundParams(pred);
   const numId = params.find((p) => typeof p === "number");
+  if (table === sysCtrlTable) {
+    // Gate: la fila existe sólo si está en el mapa; si no, [] (fail-closed lo trata
+    // como ausente). El valor puede ser 'false'/'true'/basura. El sentinel
+    // "__THROW__" simula un error de lectura de la DB (fail-closed).
+    const key = params.find((p) => typeof p === "string");
+    const v = store.controls.get(key);
+    if (v === "__THROW__") throw new Error("DB read error (simulado)");
+    return store.controls.has(key) ? [{ value: v }] : [];
+  }
   if (table === jobsTable) {
     const j = store.jobs.get(numId);
     return j ? [{ ...j }] : [];
@@ -113,6 +125,7 @@ function makeFakeDb(store: Store) {
       // (base sin congelar, sin cobro insertado) — modela el ROLLBACK atómico.
       const snapJobs = new Map([...store.jobs].map(([k, v]) => [k, { ...v }]));
       const snapTx = new Map([...store.transactions].map(([k, v]) => [k, { ...v }]));
+      const snapControls = new Map([...store.controls]);
       const snapNext = store.nextTxId;
       const tx = {
         select: (_proj?: any) => selectBuilder(store),
@@ -124,6 +137,7 @@ function makeFakeDb(store: Store) {
       } catch (e) {
         store.jobs = snapJobs;
         store.transactions = snapTx;
+        store.controls = snapControls;
         store.nextTxId = snapNext;
         throw e;
       }
@@ -174,7 +188,11 @@ const markedTxs = (store: Store, jobId: number) =>
   [...store.transactions.values()].filter((t) => t.relatedJobId === jobId && t.isJobPayment === true);
 
 let store: Store;
-beforeEach(() => { store = { jobs: new Map(), transactions: new Map(), nextTxId: 1 }; });
+beforeEach(() => {
+  store = { jobs: new Map(), transactions: new Map(), nextTxId: 1, controls: new Map() };
+  // Gate ABIERTO por defecto ('false') → los tests de cutover corren como siempre.
+  store.controls.set(PAYMENTS_LOCKED_KEY, "false");
+});
 
 // ---- Cutover A–M -------------------------------------------------------------
 
@@ -488,4 +506,115 @@ describe("8B-5c — legacyPaidBase YA SETEADA pero corrupta ⇒ FAIL CLOSED (INC
       expect(cacheOf(store, 50)).toBe(0);
     });
   }
+});
+
+// ---- GATE GLOBAL DE COBRANZAS a través de registerPayment --------------------
+
+const setGate = (store: Store, value: string) => store.controls.set(PAYMENTS_LOCKED_KEY, value);
+const delGate = (store: Store) => store.controls.delete(PAYMENTS_LOCKED_KEY);
+
+describe("8B-5 — gate global vía registerJobPaymentAtomic", () => {
+  it("A) gate 'false' → el cobro funciona normal (congela base, inserta marcado)", async () => {
+    setGate(store, "false");
+    seedJob(store, 80, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+    const r = await pay(store, 80, 3000_00);
+    expect(r.newAmountPaid).toBe(3000);
+    expect(markedTxs(store, 80)).toHaveLength(1);
+  });
+
+  it("B) gate 'true' → PAYMENTS_MAINTENANCE y CERO escrituras", async () => {
+    setGate(store, "true");
+    seedJob(store, 81, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+    await expect(pay(store, 81, 3000_00)).rejects.toThrow(PAYMENT_ERR.MAINTENANCE);
+    expect(store.transactions.size).toBe(0);           // sin insert
+    expect(cacheOf(store, 81)).toBe(0);                // amountPaid intacto
+    expect(store.jobs.get(81).legacyPaidBase).toBe("0.00");
+    expect(store.jobs.get(81).paymentStatus).toBe("partial"); // intacto
+  });
+
+  it("C) fila del gate AUSENTE → fail-closed, cero escrituras", async () => {
+    delGate(store);
+    seedJob(store, 82, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+    await expect(pay(store, 82, 1000_00)).rejects.toThrow(PAYMENT_ERR.MAINTENANCE);
+    expect(store.transactions.size).toBe(0);
+  });
+
+  it("D) gate valor VACÍO → fail-closed", async () => {
+    setGate(store, "");
+    seedJob(store, 83, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+    await expect(pay(store, 83, 1000_00)).rejects.toThrow(PAYMENT_ERR.MAINTENANCE);
+    expect(store.transactions.size).toBe(0);
+  });
+
+  it("E) gate valor CORRUPTO (sólo 'false' abre) → fail-closed", async () => {
+    for (const [id, v] of [[84, "1"], [85, "TRUE"], [86, "False"], [87, " false"], [88, "0"]] as Array<[number, string]>) {
+      setGate(store, v);
+      seedJob(store, id, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+      await expect(pay(store, id, 1000_00)).rejects.toThrow(PAYMENT_ERR.MAINTENANCE);
+      expect(markedTxs(store, id)).toHaveLength(0);
+    }
+  });
+
+  it("F) ERROR al leer el gate → fail-closed, cero escrituras", async () => {
+    setGate(store, "__THROW__");
+    seedJob(store, 89, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+    await expect(pay(store, 89, 1000_00)).rejects.toThrow();
+    expect(store.transactions.size).toBe(0);
+    expect(store.jobs.get(89).legacyPaidBase).toBe("0.00");
+  });
+
+  it("G) el gate se chequea ANTES de tocar el job (gate cerrado ⇒ job intacto)", async () => {
+    // Job NULL-base: si el cutover corriera, congelaría la base. Con gate cerrado
+    // NO se congela nada → prueba que el gate corre antes del SELECT job FOR UPDATE.
+    setGate(store, "true");
+    seedJob(store, 90, { notes: jobNotes({ labor: 10000, paid: 5000 }), base: null });
+    const notesBefore = store.jobs.get(90).notes;
+    await expect(pay(store, 90, 1000_00)).rejects.toThrow(PAYMENT_ERR.MAINTENANCE);
+    expect(store.jobs.get(90).legacyPaidBase).toBeNull();  // no se congeló
+    expect(store.jobs.get(90).notes).toBe(notesBefore);    // job intacto
+    expect(store.transactions.size).toBe(0);
+  });
+
+  it("H/I/J/K) frontera de activación (modelo serializado): activar 'true' entre cobros bloquea los siguientes", async () => {
+    // FOR UPDATE + pesimista serializan; se modela el orden garantizado. Un cobro
+    // con gate abierto completa; tras activar 'true', los siguientes drenan a error.
+    seedJob(store, 91, { notes: jobNotes({ labor: 100000, paid: 0 }), base: "0.00" });
+    const r1 = await pay(store, 91, 3000_00);           // en vuelo previo al gate → OK
+    expect(r1.newAmountPaid).toBe(3000);
+    setGate(store, "true");                              // activación (COMMIT del operador)
+    // K) el que llega después ve 'true' → cero escrituras.
+    const txAfterActivation = store.transactions.size;
+    await expect(pay(store, 91, 3000_00)).rejects.toThrow(PAYMENT_ERR.MAINTENANCE);
+    expect(store.transactions.size).toBe(txAfterActivation); // no se agregó nada
+    expect(cacheOf(store, 91)).toBe(3000);              // sólo el primer cobro persiste
+  });
+
+  it("drenaje) tras activar 'true', N cobros consecutivos abortan sin escribir", async () => {
+    setGate(store, "true");
+    seedJob(store, 92, { notes: jobNotes({ labor: 100000, paid: 0 }), base: "0.00" });
+    for (let i = 0; i < 4; i++) {
+      await expect(pay(store, 92, 1000_00)).rejects.toThrow(PAYMENT_ERR.MAINTENANCE);
+    }
+    expect(store.transactions.size).toBe(0);
+    expect(cacheOf(store, 92)).toBe(0);
+  });
+
+  it("L) alcance global: dos jobs distintos quedan ambos bloqueados por el mismo gate", async () => {
+    setGate(store, "true");
+    seedJob(store, 93, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+    seedJob(store, 94, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+    await expect(pay(store, 93, 1000_00)).rejects.toThrow(PAYMENT_ERR.MAINTENANCE);
+    await expect(pay(store, 94, 1000_00)).rejects.toThrow(PAYMENT_ERR.MAINTENANCE);
+    expect(store.transactions.size).toBe(0);
+  });
+
+  it("M) con gate 'false' el flujo canónico completo sigue intacto (parcial→total)", async () => {
+    setGate(store, "false");
+    seedJob(store, 95, { notes: jobNotes({ labor: 10000, paid: 0 }), base: "0.00" });
+    await pay(store, 95, 4000_00);
+    const r2 = await pay(store, 95, 6000_00);
+    expect(r2.isFullyPaid).toBe(true);
+    expect(store.jobs.get(95).status).toBe("collected");
+    expect(cacheOf(store, 95)).toBe(10000);
+  });
 });
