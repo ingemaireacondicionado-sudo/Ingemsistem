@@ -298,3 +298,18 @@ export const jobs = mysqlTable("jobs", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+/**
+ * Controles globales de sistema (key/value) compartidos por TODOS los procesos y
+ * versiones en TiDB. Primer uso (8B-5): el GATE de cobranzas.
+ *   controlKey = 'payments_locked', value = 'false' | 'true'.
+ * Semántica FAIL-CLOSED: SÓLO el literal exacto 'false' abre las cobranzas;
+ * cualquier otro valor / fila ausente / error ⇒ cobranzas bloqueadas. El gate se
+ * activa/desactiva por SQL controlado (no hay endpoint). La fila es además la
+ * frontera lockeable (SELECT ... FOR UPDATE) del drenaje del cutover.
+ */
+export const systemControls = mysqlTable("system_controls", {
+  controlKey: varchar("controlKey", { length: 64 }).primaryKey(),
+  value: varchar("value", { length: 255 }).notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
