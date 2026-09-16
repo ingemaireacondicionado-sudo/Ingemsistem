@@ -6,6 +6,8 @@
 dist/
 build/
 *.dist
+# Caché de compilación de Node (se regenera solo al correr build/tests)
+node-compile-cache/
 
 # Environment variables
 .env
