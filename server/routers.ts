@@ -4,6 +4,7 @@ import { systemRouter } from "./_core/systemRouter";
 import {
   publicProcedure, protectedProcedure, ingemProtectedProcedure, ingemAdminProcedure, router,
   ingemCreateProcedure, ingemEditProcedure, ingemDeleteProcedure, ingemRegisterPaymentProcedure,
+  ingemAgentsProcedure, ingemAgentsManageProcedure,
 } from "./_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -14,6 +15,11 @@ import { generateIngemToken } from "./ingemAuth";
 import { hashPassword, verifyPassword } from "./passwordUtils";
 import { validateFileUpload, validateTechnicianDocuments } from "./fileValidation";
 import { canEdit, canAccessModule } from "@shared/permissions";
+import { listAgents, getAgent } from "./agents/registry";
+import { runAgent } from "./agents/runner";
+import { executeDecisionAction } from "./agents/actions";
+import { todayInBusinessTimezone } from "./agents/facts";
+import { isAgentKey, isActionType, type ActionType, type DecisionPriority } from "./agents/types";
 import { isLoginRateLimited, registerFailedLogin, registerSuccessfulLogin, RATE_LIMIT_MESSAGE } from "./rateLimit";
 import { parsePaymentAmountCents } from "./money";
 
@@ -172,6 +178,61 @@ function generateRecurringDates(startDate: string, endDate: string, type: string
     current = addInterval(current);
   }
   return dates;
+}
+
+// Agentes que este usuario puede ver, según el módulo que analiza cada uno. Es
+// el mismo criterio para el catálogo, para las corridas y para las decisiones:
+// un agente que no podés ver no te muestra ni sus resultados.
+function visibleAgentsFor(ingemUser: { role: string; allowedModules: string | null }) {
+  const modules = safeParseModules(ingemUser.allowedModules);
+  return listAgents().filter((a) => canAccessModule(ingemUser.role, modules, a.module));
+}
+
+function visibleAgentKeysFor(ingemUser: { role: string; allowedModules: string | null }): string[] {
+  return visibleAgentsFor(ingemUser).map((a) => a.key);
+}
+
+// Mensaje único para el caso "alguien ya resolvió esta decisión" (otra pestaña,
+// otro usuario). Se usa tanto en el chequeo previo como en la toma exclusiva.
+const DECISION_RESOLVED_MSG = "Esta decisión ya fue resuelta por alguien más.";
+
+// Parseo defensivo de un blob JSON guardado por el módulo de agentes.
+function safeParseJsonObject(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw || typeof raw !== "string") return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+// La evidencia completa de la corrida se guarda para poder auditar una decisión
+// meses después. `factsJson` es una columna TEXT (64 KB): si el análisis es más
+// grande, se conserva el resumen y se deja constancia del recorte en vez de que
+// el INSERT falle y se pierda la corrida entera.
+const MAX_FACTS_JSON_CHARS = 60000;
+
+function serializeRunFacts(outcome: {
+  facts: unknown;
+  warnings: string[];
+  degraded: boolean;
+}): string {
+  const full = JSON.stringify({
+    facts: outcome.facts,
+    warnings: outcome.warnings,
+    degraded: outcome.degraded,
+  });
+  if (full.length <= MAX_FACTS_JSON_CHARS) return full;
+  const facts = outcome.facts as { summary?: unknown; today?: unknown } | null;
+  return JSON.stringify({
+    facts: { today: facts?.today ?? "", summary: facts?.summary ?? {}, candidates: [] },
+    warnings: [...outcome.warnings, "La evidencia detallada se recortó por tamaño."],
+    degraded: outcome.degraded,
+    truncated: true,
+  });
 }
 
 export const appRouter = router({
@@ -1027,6 +1088,220 @@ export const appRouter = router({
 
   // ========== Data Export (for Google Drive backup) ==========
   // Solo Administrador: el respaldo incluye datos de toda la empresa.
+  // ===== AGENTES DE GESTIÓN =====
+  // Los agentes analizan y PROPONEN; el humano aprueba. Ningún endpoint de este
+  // router escribe dinero: `run` sólo lee, y `approve` ejecuta exclusivamente la
+  // allowlist de acciones de agents/actions.ts, con los permisos del usuario que
+  // aprueba (aprobar no eleva privilegios).
+  agents: router({
+    list: ingemAgentsProcedure.query(({ ctx }) => {
+      const ingemUser = (ctx as any).ingemUser;
+      return {
+        // Quién puede disparar corridas y aprobar decisiones, para que la UI no
+        // ofrezca botones que el backend va a rechazar.
+        canManage: ingemUser.role === "admin" || ingemUser.role === "manager",
+        agents: visibleAgentsFor(ingemUser),
+      };
+    }),
+
+    runs: ingemAgentsProcedure
+      .input(z.object({
+        agentKey: z.string().optional(),
+        limit: z.number().int().min(1).max(50).default(10),
+      }))
+      .query(({ input, ctx }) =>
+        db.getAgentRuns(input.agentKey, input.limit, visibleAgentKeysFor((ctx as any).ingemUser)),
+      ),
+
+    decisions: ingemAgentsProcedure
+      .input(z.object({
+        agentKey: z.string().optional(),
+        status: z.enum(["pending", "approved", "rejected", "executed", "failed"]).optional(),
+        limit: z.number().int().min(1).max(200).default(100),
+      }))
+      .query(({ input, ctx }) => db.getAgentDecisions({
+        agentKey: input.agentKey,
+        // Un agente cuyo módulo el usuario no puede ver tampoco le muestra sus
+        // decisiones: si no accede a Finanzas, no lee el análisis de márgenes.
+        agentKeys: visibleAgentKeysFor((ctx as any).ingemUser),
+        status: input.status,
+        limit: input.limit,
+      })),
+
+    run: ingemAgentsManageProcedure
+      .input(z.object({ agentKey: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const ingemUser = (ctx as any).ingemUser;
+        if (!isAgentKey(input.agentKey)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Agente desconocido." });
+        }
+        const agent = getAgent(input.agentKey);
+        const modules = safeParseModules(ingemUser.allowedModules);
+        if (!canAccessModule(ingemUser.role, modules, agent.module)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tenés acceso al módulo que analiza este agente.",
+          });
+        }
+
+        // Lectura del negocio. Sólo SELECTs: la corrida no modifica nada.
+        const [jobsRows, transactionsRows, customersRows, productsRows] = await Promise.all([
+          db.getJobs(),
+          db.getTransactions(),
+          db.getCustomers(),
+          db.getProducts(),
+        ]);
+
+        const run = await db.createAgentRun({
+          agentKey: input.agentKey,
+          triggeredBy: ingemUser.userId,
+          triggeredByName: ingemUser.name,
+        });
+
+        try {
+          const outcome = await runAgent({
+            agentKey: input.agentKey,
+            snapshot: {
+              today: todayInBusinessTimezone(),
+              jobs: jobsRows as any,
+              transactions: transactionsRows as any,
+              customers: customersRows as any,
+              products: productsRows as any,
+            },
+          });
+
+          const rows = outcome.decisions.map((d) => ({
+            runId: run.id,
+            agentKey: input.agentKey,
+            title: d.title.slice(0, 200),
+            rationale: d.rationale,
+            recommendation: d.recommendation,
+            priority: d.priority,
+            evidenceJson: JSON.stringify(d.evidence),
+            entityType: d.entityType,
+            entityId: d.entityId,
+            actionType: d.actionType,
+            actionPayloadJson: JSON.stringify(d.actionPayload),
+            status: "pending" as const,
+          }));
+          await db.insertAgentDecisions(rows);
+
+          await db.finishAgentRun(run.id, {
+            status: "completed",
+            summary: outcome.summary,
+            model: outcome.model,
+            factsJson: serializeRunFacts(outcome),
+            decisionCount: rows.length,
+          });
+
+          return {
+            runId: run.id,
+            summary: outcome.summary,
+            decisionCount: rows.length,
+            degraded: outcome.degraded,
+            warnings: outcome.warnings,
+          };
+        } catch {
+          await db.finishAgentRun(run.id, {
+            status: "failed",
+            error: "La corrida no pudo completarse.",
+          }).catch(() => {});
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "El agente no pudo completar el análisis. Probá de nuevo en un rato.",
+          });
+        }
+      }),
+
+    approve: ingemAgentsManageProcedure
+      .input(z.object({ id: z.number().int().positive(), notes: z.string().max(500).default("") }))
+      .mutation(async ({ input, ctx }) => {
+        const ingemUser = (ctx as any).ingemUser;
+        const decision = await db.getAgentDecisionById(input.id);
+        if (!decision) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "La decisión no existe." });
+        }
+        if (!visibleAgentKeysFor(ingemUser).includes(decision.agentKey)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tenés acceso al módulo que analiza este agente.",
+          });
+        }
+        if (decision.status !== "pending") {
+          throw new TRPCError({ code: "CONFLICT", message: DECISION_RESOLVED_MSG });
+        }
+
+        // Toma EXCLUSIVA: si otra sesión aprobó primero, acá se corta y la acción
+        // no se ejecuta dos veces.
+        const claimed = await db.claimAgentDecision(input.id, {
+          status: "approved",
+          decidedBy: ingemUser.userId,
+          decidedByName: ingemUser.name,
+          decisionNotes: input.notes,
+        });
+        if (!claimed) {
+          throw new TRPCError({ code: "CONFLICT", message: DECISION_RESOLVED_MSG });
+        }
+
+        let outcome: { ok: boolean; message: string };
+        try {
+          const executed = await executeDecisionAction(
+            {
+              id: decision.id,
+              agentKey: decision.agentKey,
+              title: decision.title,
+              recommendation: decision.recommendation,
+              priority: (decision.priority ?? "medium") as DecisionPriority,
+              actionType: decision.actionType as ActionType,
+              actionPayload: safeParseJsonObject(decision.actionPayloadJson),
+              entityType: decision.entityType,
+              entityId: decision.entityId,
+            },
+            { userId: ingemUser.userId, name: ingemUser.name, role: ingemUser.role },
+            { createNote: db.createNote },
+          );
+          outcome = executed.ok
+            ? { ok: true, message: executed.result }
+            : { ok: false, message: executed.reason };
+        } catch {
+          outcome = { ok: false, message: "La acción aprobada no pudo ejecutarse. Revisala a mano." };
+        }
+
+        await db.recordAgentDecisionExecution(input.id, {
+          status: outcome.ok ? "executed" : "failed",
+          executionResult: outcome.message,
+        });
+
+        return { status: outcome.ok ? "executed" : "failed", message: outcome.message };
+      }),
+
+    reject: ingemAgentsManageProcedure
+      .input(z.object({ id: z.number().int().positive(), notes: z.string().max(500).default("") }))
+      .mutation(async ({ input, ctx }) => {
+        const ingemUser = (ctx as any).ingemUser;
+        const decision = await db.getAgentDecisionById(input.id);
+        if (!decision) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "La decisión no existe." });
+        }
+        if (!visibleAgentKeysFor(ingemUser).includes(decision.agentKey)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tenés acceso al módulo que analiza este agente.",
+          });
+        }
+        const claimed = await db.claimAgentDecision(input.id, {
+          status: "rejected",
+          decidedBy: ingemUser.userId,
+          decidedByName: ingemUser.name,
+          decisionNotes: input.notes,
+        });
+        if (!claimed) {
+          throw new TRPCError({ code: "CONFLICT", message: DECISION_RESOLVED_MSG });
+        }
+        return { status: "rejected" as const };
+      }),
+  }),
+
   dataExport: router({
     exportAll: ingemAdminProcedure.query(() => db.exportAllData()),
   }),

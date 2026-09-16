@@ -330,3 +330,77 @@ export const systemControls = mysqlTable("system_controls", {
   value: varchar("value", { length: 255 }).notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+/**
+ * ===== AGENTES DE GESTIÓN (módulo "agents") =====
+ *
+ * Los agentes NO son un canal de escritura alternativo: analizan datos de
+ * lectura y proponen decisiones que un humano aprueba. Por eso el modelo de
+ * datos separa dos cosas:
+ *   - `agent_runs`: una corrida del agente (quién la disparó, qué evidencia
+ *     determinista se usó, cómo terminó).
+ *   - `agent_decisions`: cada decisión propuesta, con su evidencia numérica
+ *     (calculada por el servidor, NUNCA por el modelo) y su acción sugerida.
+ *
+ * Una decisión nace `pending`. Sólo una aprobación humana la ejecuta, y sólo
+ * dentro de la allowlist de acciones de server/agents/actions.ts (que no
+ * incluye ninguna operación monetaria: el ledger de cobros sigue siendo
+ * exclusivo de registerPayment).
+ */
+export const agentRuns = mysqlTable("agent_runs", {
+  id: int("id").autoincrement().primaryKey(),
+  agentKey: varchar("agentKey", { length: 50 }).notNull(),
+  status: mysqlEnum("agentRunStatus", ["running", "completed", "failed"]).default("running").notNull(),
+  // Usuario ingem que disparó la corrida (auditoría). Nunca lo decide el cliente.
+  triggeredBy: int("triggeredBy"),
+  triggeredByName: varchar("triggeredByName", { length: 100 }).default(""),
+  // Resumen en prosa de la corrida (redactado por el modelo).
+  summary: text("summary"),
+  // Mensaje funcional del fallo, si status = 'failed'. Sin detalles internos.
+  error: varchar("error", { length: 500 }).default(""),
+  model: varchar("model", { length: 100 }).default(""),
+  // Evidencia determinista (JSON) que se le pasó al modelo: los números que el
+  // servidor calculó. Permite auditar una decisión mucho después.
+  factsJson: text("factsJson"),
+  decisionCount: int("decisionCount").default(0).notNull(),
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  finishedAt: timestamp("finishedAt"),
+}, (t) => ({
+  agentStartedIdx: index("idx_agent_runs_agent_started").on(t.agentKey, t.startedAt),
+}));
+
+export type AgentRun = typeof agentRuns.$inferSelect;
+export type InsertAgentRun = typeof agentRuns.$inferInsert;
+
+export const agentDecisions = mysqlTable("agent_decisions", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId").notNull(),
+  agentKey: varchar("agentKey", { length: 50 }).notNull(),
+  title: varchar("title", { length: 200 }).notNull(),
+  // Por qué el agente propone esto (fundamento).
+  rationale: text("rationale"),
+  // Qué hacer, en concreto.
+  recommendation: text("recommendation"),
+  priority: mysqlEnum("agentPriority", ["low", "medium", "high", "urgent"]).default("medium").notNull(),
+  // Números duros que respaldan la decisión, calculados por el servidor.
+  evidenceJson: text("evidenceJson"),
+  // Entidad del sistema a la que apunta (job, customer, ...) para poder abrirla.
+  entityType: varchar("entityType", { length: 50 }).default(""),
+  entityId: int("entityId"),
+  // Acción sugerida, siempre de la allowlist (server/agents/actions.ts).
+  actionType: varchar("actionType", { length: 50 }).default("review_only").notNull(),
+  actionPayloadJson: text("actionPayloadJson"),
+  status: mysqlEnum("agentDecisionStatus", ["pending", "approved", "rejected", "executed", "failed"]).default("pending").notNull(),
+  decidedBy: int("decidedBy"),
+  decidedByName: varchar("decidedByName", { length: 100 }).default(""),
+  decidedAt: timestamp("decidedAt"),
+  decisionNotes: varchar("decisionNotes", { length: 500 }).default(""),
+  executionResult: varchar("executionResult", { length: 500 }).default(""),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  statusIdx: index("idx_agent_decisions_status").on(t.status, t.agentKey),
+  runIdx: index("idx_agent_decisions_run").on(t.runId),
+}));
+
+export type AgentDecision = typeof agentDecisions.$inferSelect;
+export type InsertAgentDecision = typeof agentDecisions.$inferInsert;

@@ -3,7 +3,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
 import { extractTokenFromHeader, verifyIngemToken, type IngemTokenPayload } from "../ingemAuth";
-import { canCreate, canEdit, canDelete } from "@shared/permissions";
+import { canCreate, canEdit, canDelete, canAccessModule } from "@shared/permissions";
 import { getIngemUserById } from "../db";
 
 const t = initTRPC.context<TrpcContext>().create({
@@ -162,3 +162,42 @@ const requireIngemAdmin = t.middleware(async opts => {
 });
 
 export const ingemAdminProcedure = t.procedure.use(requireIngemAdmin);
+
+// ========== Agentes de gestión ==========
+// Dos niveles, porque no es lo mismo leer lo que propuso un agente que dispararlo
+// o aprobar una acción:
+//  - VER  (ingemAgentsProcedure):       acceso al módulo 'agents'.
+//  - OPERAR (ingemAgentsManageProcedure): correr agentes y aprobar/rechazar
+//    decisiones. Se exige además rol admin o gerente, porque una corrida expone
+//    la foto financiera completa de la empresa y una aprobación escribe datos.
+const AGENTS_FORBIDDEN_MSG =
+  "No tenés permisos para operar los agentes de gestión.";
+
+export const ingemAgentsProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const { ctx, next } = opts;
+    const ingemUser = await resolveIngemUser(ctx.req);
+    let allowedModules: string[] | null = null;
+    try {
+      allowedModules = ingemUser.allowedModules ? JSON.parse(ingemUser.allowedModules) : null;
+      if (!Array.isArray(allowedModules)) allowedModules = null;
+    } catch {
+      allowedModules = null;
+    }
+    if (!canAccessModule(ingemUser.role, allowedModules, "agents")) {
+      throw new TRPCError({ code: "FORBIDDEN", message: AGENTS_FORBIDDEN_MSG });
+    }
+    return next({ ctx: { ...ctx, ingemUser } });
+  }),
+);
+
+export const ingemAgentsManageProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const { ctx, next } = opts;
+    const ingemUser = await resolveIngemUser(ctx.req);
+    if (ingemUser.role !== "admin" && ingemUser.role !== "manager") {
+      throw new TRPCError({ code: "FORBIDDEN", message: AGENTS_FORBIDDEN_MSG });
+    }
+    return next({ ctx: { ...ctx, ingemUser } });
+  }),
+);

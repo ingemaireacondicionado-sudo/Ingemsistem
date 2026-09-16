@@ -20,7 +20,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, {
   admin: {
     label: "Administrador",
     description: "Acceso completo a todo el sistema",
-    modules: ["dashboard", "customers", "suppliers", "products", "calendar", "technicians", "notes", "finance", "jobs", "reports", "users", "settings"],
+    modules: ["dashboard", "customers", "suppliers", "products", "calendar", "technicians", "notes", "finance", "jobs", "reports", "agents", "users", "settings"],
     canCreate: ["customers", "suppliers", "products", "appointments", "technicians", "notes", "transactions", "jobs", "users"],
     canEdit: ["customers", "suppliers", "products", "appointments", "technicians", "notes", "transactions", "jobs", "users"],
     canDelete: ["customers", "suppliers", "products", "appointments", "technicians", "notes", "transactions", "jobs", "users"],
@@ -28,7 +28,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, {
   manager: {
     label: "Gerente",
     description: "Gestión operativa sin acceso a configuración de usuarios",
-    modules: ["dashboard", "customers", "suppliers", "products", "calendar", "technicians", "notes", "finance", "jobs", "reports", "settings"],
+    modules: ["dashboard", "customers", "suppliers", "products", "calendar", "technicians", "notes", "finance", "jobs", "reports", "agents", "settings"],
     canCreate: ["customers", "suppliers", "products", "appointments", "technicians", "notes", "transactions", "jobs"],
     canEdit: ["customers", "suppliers", "products", "appointments", "technicians", "notes", "transactions", "jobs"],
     canDelete: ["customers", "suppliers", "products", "appointments", "notes", "transactions", "jobs"],

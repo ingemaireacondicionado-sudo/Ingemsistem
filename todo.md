@@ -311,3 +311,20 @@
 - [x] Mejoras generales: refactorizar NewBudget con budgetUtils helpers
 - [x] Mejoras generales: mejorar TechnicianForm con validación de archivos
 - [x] Mejoras generales: agregar aria-label a botones icon-only
+
+## Agentes de gestión (propone → el dueño aprueba)
+- [x] Esquema y migración 0012: `agent_runs` y `agent_decisions` (aditiva, idempotente)
+- [x] Análisis determinista en centavos: cuentas por cobrar con antigüedad, márgenes por trabajo, flujo mensual
+- [x] Vista financiera server-side del trabajo con saldo canónico del ledger (base legacy + cobros marcados)
+- [x] Agente de Cobranzas (prioriza deuda, separa "falta facturar" del reclamo, redacta el mensaje)
+- [x] Agente de Finanzas y Rentabilidad (margen real, trabajos en pérdida, ingresos vs egresos)
+- [x] Frontera de confianza con el modelo: anti-alucinación, allowlist de acciones, evidencia del servidor
+- [x] Ejecución sólo tras aprobación humana, con los permisos de quien aprueba (nunca eleva privilegios)
+- [x] Ninguna acción monetaria: los agentes no registran cobros ni editan montos
+- [x] Degradación: si no hay modelo o falla, las decisiones salen del análisis determinista
+- [x] Aprobación exclusiva (UPDATE ... WHERE status='pending') contra doble ejecución
+- [x] Visibilidad por módulo: no ves decisiones de un agente cuyo módulo no tenés
+- [x] Panel `/agents` con bandeja de decisiones, evidencia desplegable y aprobación desde el celular
+- [x] 81 tests nuevos (análisis, validación, acciones, corrida, router y migración)
+- [ ] Agentes de Operaciones/Agenda y Comercial/Stock (siguiente tanda)
+- [ ] Corrida programada (que el agente revise solo cada mañana y deje la bandeja lista)

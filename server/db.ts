@@ -5,7 +5,7 @@ import {
   InsertUser, users,
   customers, suppliers, products, technicians,
   appointments, notes, transactions, jobs, ingemUsers, loginRateLimits,
-  privateFiles
+  privateFiles, agentRuns, agentDecisions
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { hashPassword } from './passwordUtils';
@@ -1263,4 +1263,149 @@ export async function exportAllData(dbClient?: any) {
     jobs: allJobs,
     ingemUsers: safeIngemUsers,
   };
+}
+
+// ========== Agentes de gestión ==========
+// Persistencia de corridas y decisiones propuestas. Todo lo que escribe acá es
+// registro y auditoría del módulo de agentes: ninguna de estas funciones toca
+// jobs, transactions ni el ledger de cobros.
+
+export async function createAgentRun(data: {
+  agentKey: string;
+  triggeredBy: number | null;
+  triggeredByName: string;
+}): Promise<{ id: number }> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const result = await db.insert(agentRuns).values({
+    agentKey: data.agentKey,
+    status: "running",
+    triggeredBy: data.triggeredBy,
+    triggeredByName: data.triggeredByName,
+  });
+  return { id: result[0].insertId };
+}
+
+export async function finishAgentRun(
+  id: number,
+  data: {
+    status: "completed" | "failed";
+    summary?: string;
+    error?: string;
+    model?: string;
+    factsJson?: string;
+    decisionCount?: number;
+  },
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db
+    .update(agentRuns)
+    .set({
+      status: data.status,
+      summary: data.summary ?? "",
+      error: (data.error ?? "").slice(0, 500),
+      model: (data.model ?? "").slice(0, 100),
+      factsJson: data.factsJson ?? null,
+      decisionCount: data.decisionCount ?? 0,
+      finishedAt: new Date(),
+    })
+    .where(eq(agentRuns.id, id));
+}
+
+export async function insertAgentDecisions(rows: any[]): Promise<void> {
+  if (rows.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.insert(agentDecisions).values(rows);
+}
+
+/**
+ * Corridas visibles. `agentKeys` acota el resultado a los agentes que el usuario
+ * tiene permitido ver: el filtro va en el WHERE y no después, para que el LIMIT
+ * no se consuma con filas que igual se iban a esconder.
+ */
+export async function getAgentRuns(agentKey?: string, limit = 20, agentKeys?: string[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (agentKeys && agentKeys.length === 0) return [];
+  const conditions = [];
+  if (agentKey) conditions.push(eq(agentRuns.agentKey, agentKey));
+  if (agentKeys) conditions.push(inArray(agentRuns.agentKey, agentKeys));
+  const base = db.select().from(agentRuns);
+  const filtered = conditions.length > 0 ? base.where(and(...conditions)) : base;
+  return filtered.orderBy(desc(agentRuns.startedAt)).limit(limit);
+}
+
+export async function getAgentDecisions(filter: {
+  agentKey?: string;
+  /** Agentes que el usuario puede ver. Lista vacía ⇒ no ve ninguna decisión. */
+  agentKeys?: string[];
+  status?: "pending" | "approved" | "rejected" | "executed" | "failed";
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  if (filter.agentKeys && filter.agentKeys.length === 0) return [];
+  const conditions = [];
+  if (filter.agentKey) conditions.push(eq(agentDecisions.agentKey, filter.agentKey));
+  if (filter.agentKeys) conditions.push(inArray(agentDecisions.agentKey, filter.agentKeys));
+  if (filter.status) conditions.push(eq(agentDecisions.status, filter.status));
+  const base = db.select().from(agentDecisions);
+  const filtered = conditions.length > 0 ? base.where(and(...conditions)) : base;
+  return filtered.orderBy(desc(agentDecisions.createdAt)).limit(filter.limit ?? 100);
+}
+
+export async function getAgentDecisionById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(agentDecisions).where(eq(agentDecisions.id, id)).limit(1);
+  return result[0];
+}
+
+/**
+ * Toma una decisión PENDIENTE de forma exclusiva. El UPDATE lleva la condición
+ * `status = 'pending'` en el WHERE, así que dos aprobaciones simultáneas (dos
+ * pestañas, dos usuarios) no pueden ejecutar la misma acción dos veces: la
+ * segunda no afecta ninguna fila y se rechaza. Devuelve false si la decisión ya
+ * había sido resuelta.
+ */
+export async function claimAgentDecision(
+  id: number,
+  data: {
+    status: "approved" | "rejected";
+    decidedBy: number;
+    decidedByName: string;
+    decisionNotes: string;
+  },
+): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const result: any = await db
+    .update(agentDecisions)
+    .set({
+      status: data.status,
+      decidedBy: data.decidedBy,
+      decidedByName: data.decidedByName,
+      decisionNotes: data.decisionNotes.slice(0, 500),
+      decidedAt: new Date(),
+    })
+    .where(and(eq(agentDecisions.id, id), eq(agentDecisions.status, "pending")));
+  const affected = result?.[0]?.affectedRows;
+  // Si el driver no informa filas afectadas, se asume que NO se tomó la
+  // decisión: es preferible pedir un reintento a ejecutar una acción dos veces.
+  return typeof affected === "number" && affected > 0;
+}
+
+/** Registra el resultado de ejecutar una decisión ya aprobada. */
+export async function recordAgentDecisionExecution(
+  id: number,
+  data: { status: "executed" | "failed"; executionResult: string },
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db
+    .update(agentDecisions)
+    .set({ status: data.status, executionResult: data.executionResult.slice(0, 500) })
+    .where(eq(agentDecisions.id, id));
 }

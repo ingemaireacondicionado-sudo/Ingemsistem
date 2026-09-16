@@ -23,6 +23,7 @@ import {
   FileText,
   Send,
   MoreHorizontal,
+  Bot,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -66,6 +67,7 @@ const ALL_NAV_ITEMS = [
   { path: '/oc-pendientes', label: 'OC Pendientes', icon: FileText, module: 'jobs' },
   { path: '/cobranzas', label: 'Cobranzas', icon: Receipt, module: 'finance' },
   { path: '/reports', label: 'Reportes', icon: BarChart3, module: 'reports' },
+  { path: '/agents', label: 'Agentes', icon: Bot, module: 'agents' },
   { path: '/users', label: 'Usuarios', icon: UserCog, module: 'users' },
 ];
 
@@ -91,6 +93,7 @@ const MORE_MENU_ITEMS = [
   { path: '/products', label: 'Stock / Productos', icon: Package, module: 'products' },
   { path: '/technicians', label: 'Técnicos', icon: Wrench, module: 'technicians' },
   { path: '/reports', label: 'Reportes', icon: BarChart3, module: 'reports' },
+  { path: '/agents', label: 'Agentes', icon: Bot, module: 'agents' },
   { path: '/users', label: 'Usuarios', icon: UserCog, module: 'users' },
   { path: '/settings', label: 'Configuración', icon: Settings, module: 'settings' },
 ];

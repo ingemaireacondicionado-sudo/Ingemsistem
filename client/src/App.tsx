@@ -29,6 +29,7 @@ import { InvoiceTracker } from '@/pages/InvoiceTracker';
 import { BudgetTracker } from '@/pages/BudgetTracker';
 import { NewBudget } from '@/pages/NewBudget';
 import { OCTracker } from '@/pages/OCTracker';
+import { AgentsPanel } from '@/pages/AgentsPanel';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { useCustomers } from '@/hooks/useCustomers';
 import { useSuppliers } from '@/hooks/useSuppliers';
@@ -604,6 +605,18 @@ function AppContent() {
                 appointments={appointments}
                 technicians={technicians}
               />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Agentes de gestión */}
+      <Route
+        path="/agents"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <AgentsPanel />
             </Layout>
           </ProtectedRoute>
         }
