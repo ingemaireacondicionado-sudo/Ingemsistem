@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nuestros trabajos | INGEM: instalaciones, VRF/VRV y mantenimiento</title>
+<meta name="description" content="Trabajos de INGEM en Buenos Aires y Neuquén: instalación de aire acondicionado, sistemas VRF/VRV, mantenimiento para empresas, refrigeración y cocina industrial.">
+<meta name="theme-color" content="#0e2738">
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="es_AR">
+<meta property="og:site_name" content="INGEM">
+<meta property="og:title" content="Nuestros trabajos | INGEM">
+<meta property="og:description" content="Instalaciones, sistemas VRF/VRV, mantenimiento y refrigeración en Buenos Aires y Neuquén.">
+<meta property="og:image" content="img/compartir.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&family=Outfit:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="css/styles.css">
+<script src="js/config.js"></script>
+<script src="js/productos.js"></script>
+<script src="js/trabajos.js"></script>
+<script src="js/sitio.js"></script>
+</head>
+<body>
+<a class="skip" href="#contenido">Saltar al contenido</a>
+<ingem-header pagina="trabajos"></ingem-header>
+
+<main id="contenido">
+
+  <section class="phead blueprint">
+    <div class="wrap">
+      <nav class="migas" aria-label="Estás en"><a href="index.html">Inicio</a><span aria-hidden="true">/</span><span>Trabajos</span></nav>
+      <span class="eyebrow">Nuestros trabajos</span>
+      <h1>Instalaciones, obras y mantenimiento</h1>
+      <p class="lead">El tipo de trabajos que hacemos todos los días en hogares, comercios y empresas de Buenos Aires y Neuquén.</p>
+    </div>
+  </section>
+
+  <section class="sec sec--tight">
+    <div class="wrap">
+      <div class="chips" id="filtro-trabajos" role="group" aria-label="Tipo de trabajo"></div>
+      <div class="obras mt-2" id="obras"></div>
+    </div>
+  </section>
+
+  <section class="sec sec--ice">
+    <div class="wrap">
+      <div class="sec__head">
+        <span class="eyebrow">Cómo encaramos una obra</span>
+        <h2>Del relevamiento a la puesta en marcha</h2>
+      </div>
+      <ol class="pasos pasos--claro">
+        <li class="paso"><h3>Relevamiento</h3><p>Visitamos el lugar, medimos los ambientes y vemos por dónde pueden pasar cañerías y conductos.</p></li>
+        <li class="paso"><h3>Propuesta</h3><p>Calculamos la capacidad necesaria y presupuestamos equipos, materiales y mano de obra.</p></li>
+        <li class="paso"><h3>Montaje</h3><p>Instalamos equipos, cañerías, desagües y tendido eléctrico, coordinando con la obra.</p></li>
+        <li class="paso"><h3>Puesta en marcha</h3><p>Probamos estanqueidad, hacemos vacío, cargamos gas y dejamos todo funcionando.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="cta">
+    <svg class="ico cta__copo" aria-hidden="true"><use href="#i-snow"/></svg>
+    <div class="wrap cta__in">
+      <div>
+        <h2>¿Tenés una obra o un proyecto?</h2>
+        <p>Contanos qué necesitás climatizar. Hacemos el relevamiento y te pasamos un presupuesto detallado.</p>
+      </div>
+      <div class="cta__btns">
+        <a class="btn btn--light btn--lg" data-wa="¡Hola INGEM! Quiero consultar por un proyecto de climatización."><i data-ico="wa" data-ico-clase="ico--fill"></i>Consultar por WhatsApp</a>
+        <a class="btn btn--line-light btn--lg" href="contacto.html">Otras vías de contacto</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<ingem-footer></ingem-footer>
+
+<script>
+document.addEventListener('ingem:listo', function () {
+  var UI = window.INGEM_UI;
+  var trabajos = window.INGEM_TRABAJOS || [];
+  var cats = window.INGEM_TRABAJOS_CATEGORIAS || [];
+  var filtro = document.getElementById('filtro-trabajos');
+  var grilla = document.getElementById('obras');
+  var actual = 'todos';
+
+  filtro.innerHTML = [{ id: 'todos', nombre: 'Todos' }].concat(cats).map(function (c) {
+    return '<button type="button" class="chip" data-cat="' + c.id + '">' + UI.esc(c.nombre) + '</button>';
+  }).join('');
+
+  function pintar() {
+    filtro.querySelectorAll('.chip').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.cat === actual ? 'true' : 'false');
+    });
+    grilla.innerHTML = trabajos.filter(function (t) {
+      return actual === 'todos' || t.categoria === actual;
+    }).map(UI.obra).join('');
+  }
+  filtro.addEventListener('click', function (e) {
+    var b = e.target.closest('.chip');
+    if (!b) return;
+    actual = b.dataset.cat;
+    pintar();
+  });
+  pintar();
+});
+</script>
+</body>
+</html>

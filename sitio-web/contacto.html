@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Contacto | INGEM, Especialistas en Termomecánica</title>
+<meta name="description" content="Contactá a INGEM por WhatsApp, teléfono o email. Venta de aire acondicionado y servicio técnico en Buenos Aires y Neuquén. Base en Guernica.">
+<meta name="theme-color" content="#0e2738">
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="es_AR">
+<meta property="og:site_name" content="INGEM">
+<meta property="og:title" content="Contacto | INGEM">
+<meta property="og:description" content="Escribinos por WhatsApp, llamanos o mandanos un mail.">
+<meta property="og:image" content="img/compartir.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&family=Outfit:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="css/styles.css">
+<script src="js/config.js"></script>
+<script src="js/productos.js"></script>
+<script src="js/trabajos.js"></script>
+<script src="js/sitio.js"></script>
+</head>
+<body>
+<a class="skip" href="#contenido">Saltar al contenido</a>
+<ingem-header pagina="contacto"></ingem-header>
+
+<main id="contenido">
+
+  <section class="phead blueprint">
+    <div class="wrap">
+      <nav class="migas" aria-label="Estás en"><a href="index.html">Inicio</a><span aria-hidden="true">/</span><span>Contacto</span></nav>
+      <span class="eyebrow">Contacto</span>
+      <h1>Hablemos de lo que necesitás</h1>
+      <p class="lead">La forma más rápida es WhatsApp. También podés llamarnos o mandarnos un mail.</p>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap duo duo--5-7">
+      <div class="stack stack--lg">
+        <div class="stack">
+          <span class="eyebrow">Vías de contacto</span>
+          <h2>Estamos para ayudarte</h2>
+        </div>
+        <div class="contactos">
+          <a class="contacto contacto--wa" data-wa="¡Hola INGEM! Quiero hacer una consulta." href="#"><span class="contacto__ico"><i data-ico="wa" data-ico-clase="ico--fill"></i></span><small>WhatsApp</small><b data-c="telefono">11 5467-3062</b></a>
+          <a class="contacto" data-tel href="#"><span class="contacto__ico"><i data-ico="phone"></i></span><small>Teléfono</small><b data-c="telefono">11 5467-3062</b></a>
+          <a class="contacto" data-mail href="#"><span class="contacto__ico"><i data-ico="mail"></i></span><small>Email</small><b data-c="email">ingemaireacondicionado@gmail.com</b></a>
+          <a class="contacto" data-mapa href="#"><span class="contacto__ico"><i data-ico="map-pin"></i></span><small>Dirección · ver en el mapa</small><b data-c="direccion">Calle 30 N° 2003, Guernica, Buenos Aires</b></a>
+          <div class="contacto" data-si="horario" hidden><span class="contacto__ico"><i data-ico="clock"></i></span><small>Horario de atención</small><b data-c="horario"></b></div>
+        </div>
+        <p class="form-nota">Trabajamos en Buenos Aires y hacemos visitas programadas a Neuquén.</p>
+      </div>
+
+      <form class="panel panel--shadow stack stack--lg" data-wa-form="¡Hola INGEM! Les escribo desde la web." novalidate>
+        <div class="stack">
+          <h2 style="font-size:1.5rem">Dejanos tu consulta</h2>
+          <p class="form-nota">Al enviar se abre WhatsApp con el mensaje listo.</p>
+        </div>
+        <div class="form-grid">
+          <div class="campo">
+            <label for="ct-nombre">Nombre</label>
+            <input type="text" id="ct-nombre" name="nombre" data-etiqueta="Nombre" autocomplete="name" required data-error="Decinos tu nombre.">
+          </div>
+          <div class="campo">
+            <label for="ct-localidad">Localidad <span class="opc">(opcional)</span></label>
+            <input type="text" id="ct-localidad" name="localidad" data-etiqueta="Localidad" autocomplete="address-level2">
+          </div>
+          <div class="campo full">
+            <label for="ct-motivo">Motivo</label>
+            <select id="ct-motivo" name="motivo" data-etiqueta="Motivo">
+              <option>Comprar un equipo</option>
+              <option>Servicio técnico</option>
+              <option>Proyecto u obra</option>
+              <option>Abono de mantenimiento</option>
+              <option>Otra consulta</option>
+            </select>
+          </div>
+          <div class="campo full">
+            <label for="ct-mensaje">Mensaje</label>
+            <textarea id="ct-mensaje" name="mensaje" data-etiqueta="Mensaje" rows="4" required data-error="Escribí tu consulta."></textarea>
+          </div>
+        </div>
+        <p class="form-ok" data-ok hidden>Abrimos WhatsApp con tu mensaje listo: solo falta tocar Enviar. Si no se abrió, escribinos al <span data-c="telefono">11 5467-3062</span>.</p>
+        <div><a class="btn btn--wa btn--lg" data-enviar href="#"><i data-ico="wa" data-ico-clase="ico--fill"></i>Enviar por WhatsApp</a></div>
+      </form>
+    </div>
+  </section>
+
+</main>
+
+<ingem-footer></ingem-footer>
+</body>
+</html>

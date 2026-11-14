@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Productos | INGEM: splits, equipos comerciales y VRF/VRV</title>
+<meta name="description" content="Aires acondicionados split, piso-techo, cassette, baja silueta y sistemas VRF/VRV de Daikin, Midea, Carrier y Surrey. Armá tu pedido y envialo por WhatsApp.">
+<meta name="theme-color" content="#0e2738">
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="es_AR">
+<meta property="og:site_name" content="INGEM">
+<meta property="og:title" content="Productos | INGEM">
+<meta property="og:description" content="Splits, equipos comerciales y sistemas VRF/VRV. Armá tu pedido y envialo por WhatsApp.">
+<meta property="og:image" content="img/compartir.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&family=Outfit:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="css/styles.css">
+<script src="js/config.js"></script>
+<script src="js/productos.js"></script>
+<script src="js/trabajos.js"></script>
+<script src="js/sitio.js"></script>
+<script src="js/tienda.js"></script>
+</head>
+<body>
+<a class="skip" href="#contenido">Saltar al contenido</a>
+<ingem-header pagina="productos"></ingem-header>
+
+<main id="contenido">
+
+  <section class="phead blueprint">
+    <div class="wrap">
+      <nav class="migas" aria-label="Estás en"><a href="index.html">Inicio</a><span aria-hidden="true">/</span><span>Productos</span></nav>
+      <span class="eyebrow">Tienda</span>
+      <h1>Aires acondicionados y sistemas de climatización</h1>
+      <p class="lead">Armá tu pedido y envialo por WhatsApp. Te confirmamos stock, forma de pago y entrega, y si querés también lo instalamos.</p>
+    </div>
+  </section>
+
+  <!-- Catálogo -->
+  <section class="sec sec--tight" id="catalogo">
+    <div class="wrap">
+      <p class="aviso" id="aviso-ejemplo" hidden><i data-ico="info"></i><span><strong>Catálogo de muestra.</strong> Los modelos y precios publicados son de ejemplo hasta cargar la lista real.</span></p>
+
+      <div class="tabs-scroll mt-1">
+        <div class="tabs" id="tabs" role="group" aria-label="Categorías"></div>
+      </div>
+
+      <div class="filtros">
+        <div class="buscador">
+          <i data-ico="search"></i>
+          <label class="sr-only" for="buscar">Buscar productos</label>
+          <input type="search" id="buscar" placeholder="Buscar por modelo, marca o capacidad" autocomplete="off">
+        </div>
+        <div class="chips" id="marcas" role="group" aria-label="Marcas"></div>
+        <div class="filtros__fin">
+          <div class="chips">
+            <span class="resultado" id="resultado" aria-live="polite"></span>
+            <button type="button" class="chip" id="quitar-fg" aria-pressed="true" hidden><span></span> ✕</button>
+          </div>
+          <label class="orden">Ordenar
+            <select id="orden">
+              <option value="destacados">Recomendados</option>
+              <option value="menor">Menor precio</option>
+              <option value="mayor">Mayor precio</option>
+              <option value="capacidad">Menor capacidad</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="prods" id="grilla"></div>
+      <p class="form-nota mt-2" id="nota-precios"></p>
+    </div>
+  </section>
+
+  <!-- Cómo comprar -->
+  <section class="sec sec--ice">
+    <div class="wrap">
+      <div class="sec__head">
+        <span class="eyebrow">Cómo comprar</span>
+        <h2>Tu pedido en tres pasos</h2>
+      </div>
+      <ol class="pasos pasos--claro pasos--3">
+        <li class="paso"><h3>Elegí tus equipos</h3><p>Sumá al pedido los productos que te interesan. Podés combinar marcas y capacidades.</p></li>
+        <li class="paso"><h3>Envianos el pedido</h3><p>Con un toque se abre WhatsApp con el detalle listo para enviar.</p></li>
+        <li class="paso"><h3>Coordinamos el resto</h3><p>Te confirmamos stock, forma de pago, entrega e instalación.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- Calculadora -->
+  <section class="sec" id="calculadora">
+    <div class="wrap">
+      <div class="sec__head">
+        <span class="eyebrow">Calculadora</span>
+        <h2>¿Cuántas frigorías necesito?</h2>
+        <p class="lead">Un cálculo orientativo para elegir la capacidad del equipo. Para ambientes especiales, consultanos.</p>
+      </div>
+      <div class="calc">
+        <div class="panel stack stack--lg">
+          <div class="campo">
+            <label for="calc-m2">Superficie del ambiente (m²)</label>
+            <input type="number" id="calc-m2" inputmode="decimal" min="1" max="1000" step="1" value="20">
+          </div>
+          <div class="campo">
+            <label for="calc-uso">Tipo de ambiente</label>
+            <select id="calc-uso">
+              <option value="normal">Dormitorio o living de uso normal</option>
+              <option value="sol">Mucho sol, último piso o grandes ventanales</option>
+              <option value="local">Local comercial, cocina o mucha gente</option>
+            </select>
+          </div>
+          <p class="form-nota">Referencia usada: 50 frigorías por metro cúbico, con techos de hasta 2,6 m de altura.</p>
+        </div>
+        <div class="calc__res" aria-live="polite">
+          <span class="label">Capacidad estimada</span>
+          <div class="calc__num" id="calc-num">— <small>FG</small></div>
+          <p id="calc-texto"></p>
+          <button type="button" class="btn btn--light" id="calc-ver" hidden><span>Ver equipos</span> <i data-ico="arrow"></i></button>
+          <a class="btn btn--light" id="calc-cotizar" target="_blank" rel="noopener" href="#" hidden>Pedir asesoramiento</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta">
+    <svg class="ico cta__copo" aria-hidden="true"><use href="#i-snow"/></svg>
+    <div class="wrap cta__in">
+      <div>
+        <h2>¿Buscás otro modelo o capacidad?</h2>
+        <p>Escribinos con lo que necesitás y te pasamos precio y disponibilidad.</p>
+      </div>
+      <div class="cta__btns">
+        <a class="btn btn--light btn--lg" data-wa="¡Hola INGEM! Busco un equipo que no veo en el catálogo de la web."><i data-ico="wa" data-ico-clase="ico--fill"></i>Consultar por WhatsApp</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<ingem-footer></ingem-footer>
+</body>
+</html>

@@ -25,7 +25,15 @@ shared/          Tipos y constantes compartidas
 drizzle/         Esquema de base de datos y migraciones SQL
 patches/         Parches de dependencias (wouter)
 references/      Documentación de integraciones de la plataforma
+sitio-web/       Sitio web público (estático e independiente del sistema)
 ```
+
+## Sitio web público
+
+La carpeta `sitio-web/` contiene la página pública de INGEM (empresa, tienda
+con pedido por WhatsApp, servicio técnico, trabajos y contacto). Es HTML, CSS y
+JavaScript sin dependencias: no usa el backend ni la base de datos del sistema.
+Ver `sitio-web/README.md` para editarla y publicarla.
 
 ## Ejecutar el proyecto
 
